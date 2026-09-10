@@ -95,5 +95,7 @@ The trade-offs accepted, plainly:
 - **The shipped hook commands name `python3`.** There is no installer here to render them per
   platform, so on Windows they must be changed to `python` by hand.
 
-*No longer true since ADR-0006 (2026-09-10): `install.py` renders the interpreter per
-platform when it installs `settings.json`.*
+*Appended 2026-09-10: ADR-0006 brought the installer and its tests into this repository, so
+§2's listing of them as "not here" and the consequence above that the entry documents omit
+the installer both stopped being true that day; `install.py` also renders the hook
+interpreter per platform, so Windows no longer needs the hand edit named just above.*

@@ -28,7 +28,9 @@ packaging, no dependencies; functions-first, fully typed, docstringed, per the c
 standards. Python 3.12 is the floor — the version the README already claims — enforced by
 ruff's `target-version = "py312"` and mypy's `python_version = "3.12"` (§12), not by a
 packaging pin: a repository that ships a script rather than a package carries no `[project]`
-table in `pyproject.toml` to hold one. Pure logic — merging, rendering, hashing, planning — is
+table in `pyproject.toml` to hold one. The script checks the floor itself: run on an older
+interpreter it prints one line on stderr naming the version it found and exits 1 (§2),
+rather than failing on an import. Pure logic — merging, rendering, hashing, planning — is
 separated from I/O so the unit tier needs no disk.
 
 **2. CLI.** `install.py [--dry-run] [--status] [--uninstall] [--home PATH] [--python NAME]`.
@@ -44,7 +46,11 @@ stderr and no traceback: drift and error share the code, and only a usage error 
 excluded. These are KASPER's; every install overwrites them. An update also **prunes**: a
 file the previous manifest (§7) recorded that the source no longer ships is backed up (§6),
 deleted, and reported as `remove`, and a directory the removal leaves empty goes with it —
-so a rename or a deletion upstream leaves no stale copy behind for Claude Code to read.
+so a rename or a deletion upstream leaves no stale copy behind for Claude Code to read. The
+prune goes by what the manifest recorded, not by the file's current bytes: a stale file the
+user has edited since is removed too. That is deliberately the opposite of `--uninstall`
+(§10), which keeps anything it did not write — a file the source no longer ships belongs to
+no install at all, and the backup (§6) is the safety net that makes removing it safe.
 
 **4. `settings.json` is merged, never replaced.** The existing file is loaded, or taken as
 empty. Across **every** event in it, not only the events KASPER defines, existing handlers
@@ -66,9 +72,10 @@ and only the seed is the portable part.
 **6. Backup before overwrite.** Every existing owned file whose bytes differ from the
 incoming one, and `settings.json` and the ledger when they exist and would change, are copied
 first to `~/.claude/kasper-backup-<UTC timestamp>/<same relative path>`, the files an update
-prunes (§3) among them. A run that changes nothing creates no backup directory. A directory
-of that name that already exists gets a `-2`, `-3`, … suffix, so two runs inside the same
-second cannot overwrite each other's copies.
+prunes (§3) among them — a pruned file the user had edited included, which is exactly why
+the copy is taken before the delete. A run that changes nothing creates no backup directory.
+A directory of that name that already exists gets a `-2`, `-3`, … suffix, so two runs inside
+the same second cannot overwrite each other's copies.
 
 **7. Manifest.** `~/.claude/kasper-manifest.json`, schema 1: source path, source git commit
 or null when unavailable, install time as UTC ISO, interpreter name, and a `files` map from
@@ -76,6 +83,14 @@ each owned file's relative path to its SHA-256. `settings.json` and the ledger a
 from `files` — they are merged, not owned. It is also what the next install reads to find
 the files it should prune (§3): what the previous run recorded and the source no longer
 ships.
+
+A manifest the install cannot read — corrupt, truncated, or some other tool's file of the
+same name — does **not** stop it: the run warns on stderr, skips the prune, and writes a
+fresh manifest, because re-running the installer is the repair path for a half-written home
+and must not be blocked by the very file that is damaged. `--status` and `--uninstall`
+repair nothing, so for them the same file stays fatal (§2's exit 1). One case is fatal in
+every mode, install included: a manifest key that resolves outside the home. The prune and
+the uninstall delete *by key*, so the key is precisely the danger.
 
 **8. `--dry-run`** prints the plan — create, overwrite, unchanged, merge, remove — names
 every file it would back up, and writes nothing.

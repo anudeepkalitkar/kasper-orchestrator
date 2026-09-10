@@ -34,9 +34,20 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TextIO, TypedDict
+
+#: The floor ADR-0006 §1 pins. Checked here, above the first import that needs it, so an
+#: older interpreter meets one sentence instead of ``ImportError: cannot import name 'UTC'``.
+MINIMUM_PYTHON: tuple[int, int] = (3, 12)
+
+if sys.version_info < MINIMUM_PYTHON:
+    _wanted = ".".join(str(part) for part in MINIMUM_PYTHON)
+    _found = ".".join(str(part) for part in sys.version_info[:3])
+    print(f"install.py needs Python {_wanted} or newer — this is {_found}", file=sys.stderr)
+    raise SystemExit(1)
+
+from datetime import UTC, datetime  # noqa: E402 — datetime.UTC is 3.11+, so it waits
 
 #: The paths copied verbatim from the repository's ``.claude/`` — KASPER's own (§3).
 OWNED_PATHS: tuple[str, ...] = (

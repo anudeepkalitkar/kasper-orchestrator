@@ -19,7 +19,7 @@ first time; the Windows path is verified on the UTM Windows 11 VM.
       done-check: `ls docs/adr/ | grep -c '^000[1-6]-'` prints 6
       cap:        3
       owner:      documentor   verifier: code-reviewer (consistency vs install.py, after subtask 3)
-- [x] 2. Gate tooling + tests first — commit: pending (82 tests, red on missing module by design; batched with 3)
+- [x] 2. Gate tooling + tests first — commit: 8e6511e (82 tests red-by-design at authoring; 150 by the end of 3)
       goal:       root pyproject.toml (ruff, strict mypy, pytest testpaths); gitignored .venv with
                   ruff/mypy/pytest; tests/unit/ (pure functions, no I/O) and tests/integration/
                   (tmp homes via --home) written against the ADR-0006 contract; tests fail only
@@ -27,25 +27,25 @@ first time; the Windows path is verified on the UTM Windows 11 VM.
       done-check: `.venv/bin/ruff check tests && .venv/bin/pytest tests --collect-only -q`
       cap:        5
       owner:      tester   verifier: python-developer (reads them before implementing; reports gaps)
-- [x] 3. install.py — commit: pending (verified by tester 2026-09-10 after 3 review rounds: ruff 0, mypy ok, 47 unit + 103 integration = 150 passed, 0 skipped)
+- [x] 3. install.py — commit: 8e6511e (verified by tester 2026-09-10 after 3 review rounds: ruff 0, mypy ok, 47 unit + 103 integration = 150 passed, 0 skipped)
       goal:       install.py at repo root implements the ADR-0006 spec; all tests green
       done-check: `.venv/bin/ruff check . && .venv/bin/mypy . && .venv/bin/pytest tests/unit && .venv/bin/pytest tests/integration`
       cap:        5
       owner:      python-developer   verifier: tester (re-runs the gate; adds tests for gaps)
-- [ ] 4. Code review — commit: n/a — round 1: must-fix 2 (uninstall path containment; wrong-shape JSON uncaught) → fixed; round 2: B1 closed (no traversal bypass), must-fix 2 more (non-string ledger pattern → TypeError; `out=sys.stdout` bound at import breaks capture) → back to owner
+- [x] 4. Code review — commit: n/a — verdict after round 3: NITS ONLY (N-1 version guard + H-1 recorder ensure_ascii being fixed; N-2..N-5 doc nits to documentor). round 1: must-fix 2 (uninstall path containment; wrong-shape JSON uncaught) → fixed; round 2: B1 closed (no traversal bypass), must-fix 2 more (non-string ledger pattern → TypeError; `out=sys.stdout` bound at import breaks capture) → back to owner
       goal:       code-reviewer finds nothing above "nit" against code-standards/test-structure and
                   the ADR; findings routed back to owner until clean
       done-check: reviewer verdict recorded here
       cap:        3
       owner:      code-reviewer   verifier: n/a (review)
-- [x] 5. README + CLAUDE.md — commit: pending (documentor 2026-09-10; grep done-check empty; reviewer pass pending)
+- [x] 5. README + CLAUDE.md — commit: 082ecbc (documentor 2026-09-10; reviewer: every claim backed by code)
       goal:       README "Use" describes the one-command install (+ --status/--dry-run/--uninstall,
                   Windows `python`); CLAUDE.md "Where things are" and the hooks section no longer
                   say the installer is absent; no stale "hand copy" / "python3→python by hand" claims
       done-check: `grep -rn -i 'hand copy\|no installer\|change them to .python.' README.md CLAUDE.md .claude/CLAUDE.md` is empty
       cap:        3
       owner:      documentor   verifier: code-reviewer (docs vs code)
-- [ ] 6. macOS real-home run — commit: n/a
+- [x] 6. macOS real-home run — commit: n/a — 2026-09-10: 4 overwrites (CLAUDE.md + 3 reflowed scripts) with digest-verified backups, settings/ledger unchanged, --status exit 0, manifest source_commit=082ecbc
       goal:       `python3 install.py --dry-run` then `python3 install.py` against the real ~/.claude
                   reports only "unchanged"/"merge" (home already matches), `--status` exits 0
       done-check: `python3 install.py --status; echo exit=$?` prints exit=0
@@ -107,6 +107,9 @@ first time; the Windows path is verified on the UTM Windows 11 VM.
   teach `mypy .` and a `development` mainline; this repo uses bare `mypy` and `master` — open
   ruling with the human (pre-existing). ADR-0001 §2 context still says installer/tests absent —
   append-only history, superseded in practice by ADR-0006.
+- Follow-up found at checkpoint (2026-09-10): `permission_recorder.py` wrote the ledger with
+  `ensure_ascii=True`, mangling every em-dash to `\u2014` on each recorded grant — fixed in this
+  branch as a one-word change (reviewer H-1) since the branch already touches that file.
 - Checkpoints are batched: after 1, after 2+3(+4 fixes), after 5 — three git-workflow calls.
 
 ## Review

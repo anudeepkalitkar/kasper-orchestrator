@@ -46,6 +46,10 @@ hook resolves through `$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py`, so the 
 in place in any project that carries it — no install step stands between a clone and a
 working config.
 
+*Section 5 superseded by ADR-0005 (2026-09-10): hooks resolve through
+`$HOME/.claude/scripts/run_hook.py`, and the home install is the installation mechanism.
+The rest of this record stands.*
+
 ## Alternatives considered
 
 - **Build elsewhere and copy releases in** — rejected: two places to change, two histories to

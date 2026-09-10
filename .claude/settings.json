@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py\" bash_permission_gate",
+            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" bash_permission_gate",
             "timeout": 600
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py\" autoformat"
+            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" autoformat"
           }
         ]
       },
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py\" permission_recorder"
+            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" permission_recorder"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py\" notify"
+            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" notify"
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py\" notify"
+            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" notify"
           }
         ]
       }
@@ -57,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py\" project_dirs"
+            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" project_dirs"
           }
         ]
       }

@@ -22,6 +22,7 @@ from tests.helpers.cli import line_with, parse_kinds, run_cli
 from tests.helpers.files import read_json
 from tests.helpers.settings import hook_commands
 from tests.helpers.source import make_source
+from tests.helpers.symlinks import symlink_or_skip
 
 
 def _run_install(
@@ -907,7 +908,7 @@ def test_install_replaces_a_symlinked_owned_path_and_leaves_its_target_alone(
     outside.write_text("my own global instructions\n", encoding="utf-8")
     linked = installed_home / "CLAUDE.md"
     linked.unlink()
-    linked.symlink_to(outside)
+    symlink_or_skip(linked, outside)
     _run_install(repo_root, installed_home, now=fixed_now)
     assert not linked.is_symlink()
     assert linked.read_bytes() == (repo_root / ".claude/CLAUDE.md").read_bytes()
@@ -917,10 +918,16 @@ def test_install_replaces_a_symlinked_owned_path_and_leaves_its_target_alone(
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits do not exist on NTFS")
 def test_a_merge_keeps_the_settings_files_permission_bits(
     repo_root: Path, installed_home: Path
 ) -> None:
-    """A ``chmod 600`` settings file must not come back world-readable (review NB-4)."""
+    """A ``chmod 600`` settings file must not come back world-readable (review NB-4).
+
+    POSIX only: NTFS has no permission bits, so ``chmod(0o600)`` there moves nothing and
+    ``st_mode & 0o777`` reads ``0o666`` for any writable file. ``_write_json``'s
+    ``shutil.copymode`` is still correct on both — Windows simply has nothing to carry.
+    """
     settings_path = installed_home / install.SETTINGS_NAME
     settings_path.chmod(0o600)
     _run_install(repo_root, installed_home, python="python")
@@ -1078,7 +1085,7 @@ def test_uninstall_leaves_a_symlinked_owned_directory_and_its_target_alone(
     for child in sorted(sounds.iterdir()):
         child.unlink()
     sounds.rmdir()
-    sounds.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(sounds, outside, target_is_directory=True)
     out = io.StringIO()
     assert install.uninstall(installed_home, now=fixed_now, out=out) == 0
     assert not (installed_home / install.MANIFEST_NAME).exists()

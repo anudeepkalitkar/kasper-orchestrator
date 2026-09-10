@@ -2,7 +2,7 @@
 
 - **Status:** in-progress
 - **Branch:** feat/installer
-- **PR:** n/a
+- **PR:** https://github.com/anudeepkalitkar/kasper-orchestrator/pull/2
 - **Created:** 2026-09-10
 
 ## Goal
@@ -51,7 +51,7 @@ first time; the Windows path is verified on the UTM Windows 11 VM.
       done-check: `python3 install.py --status; echo exit=$?` prints exit=0
       cap:        3
       owner:      tester   verifier: KASPER (reads the report)
-- [ ] 7. Windows VM verification (exit gate) — commit: n/a
+- [x] 7. Windows VM verification (exit gate) — commit: n/a — 2026-09-10 on Win11 @082ecbc: scratch + real-home upgrade all exit 0; hooks `python "$HOME/..."`; Git Bash dispatcher allow/ask OK; backup 36 files byte-identical; ruff+mypy 0 on Windows; pytest 149/150 — 1 red = POSIX-mode-bits test (test defect, guarded in follow-up commit)
       goal:       on the UTM Windows 11 VM: clone/copy the repo, `python install.py --home <tmp>`
                   then real home; `--status` 0; hooks rendered with `python`; `--uninstall` clean
       done-check: tester's transcript from the VM shows exit=0 for install and status
@@ -64,7 +64,7 @@ first time; the Windows path is verified on the UTM Windows 11 VM.
                   an OLDER hand copy (agents/commands/rules/scripts/skills/CLAUDE.md/ledger/
                   settings, no sounds, no manifest) — so the gate is an upgrade-over-existing run:
                   expect backups + manifest, then --status 0, then --uninstall.
-- [ ] 8. PR to master — commit: n/a
+- [ ] 8. PR to master — commit: a1ae28d (fix: 3.12 floor + recorder ensure_ascii) — PR #2 OPEN 2026-09-10, awaiting VM gate + human yes
       goal:       PR open, gate green on head, task doc linked; merge on the human's yes
       done-check: `gh pr view --json state` = OPEN → MERGED after human yes
       cap:        2

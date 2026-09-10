@@ -1,0 +1,222 @@
+{
+  "_doc": "Permission ledger — single source of truth for what Bash may auto-run. Read by .claude/scripts/bash_permission_gate.py (PreToolUse) and appended to by .claude/scripts/permission_recorder.py (PostToolUse) when the user grants a prompt. allow_keys: token-prefix -> note. allow_patterns: regex allowed at segment level. ask_patterns + denials: regex that always forces a human prompt. grants: auto-recorded user approvals — empty on a fresh clone; this ledger carries only the portable seeds, and per-machine grants accrue locally as you approve prompts.",
+  "allow_keys": {
+    "cd": "navigation",
+    "ls": "read-only",
+    "cat": "read-only",
+    "grep": "read-only",
+    "rg": "read-only",
+    "find": "read-only",
+    "head": "read-only",
+    "tail": "read-only",
+    "wc": "read-only",
+    "echo": "trivial",
+    "printf": "trivial",
+    "sort": "read-only",
+    "uniq": "read-only",
+    "diff": "read-only",
+    "cmp": "read-only",
+    "sed": "text processing (in-place edits stay inside the project tree)",
+    "awk": "read-only",
+    "cut": "read-only",
+    "tr": "read-only",
+    "perl": "text processing",
+    "basename": "trivial",
+    "dirname": "trivial",
+    "realpath": "trivial",
+    "pwd": "trivial",
+    "which": "read-only",
+    "type": "read-only",
+    "env": "read-only when bare",
+    "date": "read-only",
+    "jq": "read-only",
+    "column": "read-only",
+    "seq": "trivial",
+    "tee": "writes inside boundary",
+    "test": "trivial",
+    "true": "trivial",
+    "false": "trivial",
+    "sleep": "trivial",
+    "mkdir": "creates dirs inside boundary",
+    "rmdir": "empty dirs only",
+    "touch": "trivial",
+    "cp": "copies inside boundary",
+    "mv": "moves inside boundary",
+    "chmod": "non-recursive only (-R is guarded)",
+    "tar": "archive inside boundary",
+    "unzip": "archive inside boundary",
+    "zip": "archive inside boundary",
+    "file": "read-only",
+    "stat": "read-only",
+    "du": "read-only",
+    "df": "read-only",
+    "ps": "read-only",
+    "pgrep": "read-only",
+    "lsof": "read-only",
+    "base64": "read-only",
+    "shasum": "read-only",
+    "uname": "read-only",
+    "python": "dev toolchain",
+    "python3": "dev toolchain",
+    "pip": "dev toolchain",
+    "pip3": "dev toolchain",
+    "uv": "dev toolchain",
+    "poetry": "dev toolchain",
+    "ruff": "linter",
+    "mypy": "type checker",
+    "pytest": "test runner",
+    "black": "formatter",
+    "isort": "formatter",
+    "tox": "test runner",
+    "pre-commit": "dev toolchain",
+    "node": "dev toolchain",
+    "npm": "dev toolchain",
+    "npx": "dev toolchain",
+    "pnpm": "dev toolchain",
+    "yarn": "dev toolchain",
+    "make": "build/test targets",
+    "go": "dev toolchain",
+    "cargo": "dev toolchain",
+    "git status": "read-only",
+    "git log": "read-only",
+    "git diff": "read-only",
+    "git show": "read-only",
+    "git branch": "local",
+    "git switch": "local",
+    "git checkout": "local",
+    "git add": "local",
+    "git commit": "local",
+    "git rm": "staged, recoverable",
+    "git restore": "local",
+    "git stash": "local",
+    "git fetch": "network read",
+    "git pull": "network read",
+    "git clone": "network read",
+    "git rev-parse": "read-only",
+    "git rev-list": "read-only",
+    "git merge-base": "read-only",
+    "git cat-file": "read-only",
+    "git remote": "read-only/local",
+    "git config": "local",
+    "git ls-files": "read-only",
+    "git ls-tree": "read-only",
+    "git ls-remote": "network read",
+    "git check-ignore": "read-only",
+    "git blame": "read-only",
+    "git describe": "read-only",
+    "git worktree": "local",
+    "git tag": "local",
+    "git shortlog": "read-only",
+    "git reflog": "read-only",
+    "git init": "local",
+    "git mv": "local",
+    "git grep": "read-only",
+    "git count-objects": "read-only",
+    "git bundle": "local",
+    "git reset": "local unstage (--hard stays guarded)",
+    "gh pr": "PR ops incl. create on own repos (merge is guarded)",
+    "gh issue": "own repos",
+    "gh run": "CI reads/reruns",
+    "gh api": "GET only (mutating methods are guarded)",
+    "gh auth status": "read-only",
+    "terraform validate": "read-only",
+    "terraform fmt": "local",
+    "terraform plan": "read-only",
+    "terraform output": "read-only",
+    "terraform show": "read-only",
+    "terraform version": "read-only",
+    "terraform init": "downloads providers",
+    "docker compose": "local dev (down -v is guarded)",
+    "docker ps": "read-only",
+    "docker images": "read-only",
+    "docker logs": "read-only",
+    "docker info": "read-only",
+    "docker build": "local"
+  },
+  "allow_patterns": [
+    {
+      "pattern": "\\bgit\\s+push\\b.*\\b(feat|fix|feature)/",
+      "note": "feature-branch push — standing exception per git-workflow/boundaries"
+    }
+  ],
+  "ask_patterns": [
+    {
+      "pattern": "\\brm\\s+-[a-zA-Z]*[rf]",
+      "note": "recursive/forced delete — always confirm"
+    },
+    {
+      "pattern": "\\bgit\\s+push\\b.*\\b(main|master|develop|development|qa|prod|production)\\b",
+      "note": "shared-branch push is human-only (git-workflow)"
+    },
+    {
+      "pattern": "\\bgit\\s+push\\b.*(\\s-f\\b|--force)",
+      "note": "force push — human only"
+    },
+    {
+      "pattern": "\\bgit\\s+reset\\s+--hard\\b",
+      "note": "discards local work — confirm"
+    },
+    {
+      "pattern": "\\bgit\\s+clean\\s+-[a-zA-Z]*f",
+      "note": "deletes untracked files — confirm"
+    },
+    {
+      "pattern": "\\bgh\\s+pr\\s+merge\\b",
+      "note": "merges stay human (git-workflow)"
+    },
+    {
+      "pattern": "\\bgh\\s+repo\\s+(delete|rename)\\b",
+      "note": "repo-level mutation — human only"
+    },
+    {
+      "pattern": "\\bgh\\s+api\\b.*(-X|--method)[= ]*(POST|PUT|PATCH|DELETE)",
+      "note": "mutating gh api call — network write, confirm (boundaries)"
+    },
+    {
+      "pattern": "\\bsudo\\b",
+      "note": "system-level — always confirm"
+    },
+    {
+      "pattern": "\\bchmod\\s+-R\\b|\\bchown\\s+-R\\b",
+      "note": "recursive permission change — confirm"
+    },
+    {
+      "pattern": "\\b(curl|wget)\\b",
+      "note": "use WebFetch/WebSearch for reads; curl/wget can POST — network write, confirm (boundaries)"
+    },
+    {
+      "pattern": "\\b(dd|mkfs|shred|fdisk)\\b",
+      "note": "disk-level destruction — always confirm"
+    },
+    {
+      "pattern": ">\\s*/dev/(?!null|stdout|stderr)",
+      "note": "writing to a device — confirm"
+    },
+    {
+      "pattern": "\\bof=/dev/",
+      "note": "dd to a device — confirm"
+    },
+    {
+      "pattern": "\\bterraform\\s+(apply|destroy)\\b",
+      "note": "cloud mutation, costs money — confirm (boundaries)"
+    },
+    {
+      "pattern": "\\baws\\s+[\\w-]+\\s+(delete|terminate|create|update|put|deploy|run|start|stop|reboot|modify|register|deregister|invoke|cp|sync|mb|rb)[\\w-]*\\b",
+      "note": "AWS write — costs money, confirm (boundaries)"
+    },
+    {
+      "pattern": "\\bdocker\\b.*\\b(rm|rmi|prune)\\b",
+      "note": "removes containers/images — confirm"
+    },
+    {
+      "pattern": "\\bdocker\\s+compose\\b.*\\bdown\\b.*-v",
+      "note": "drops volumes/data — confirm"
+    },
+    {
+      "pattern": ":\\(\\)\\s*\\{[^}]*\\}\\s*;",
+      "note": "fork bomb"
+    }
+  ],
+  "grants": [],
+  "denials": []
+}

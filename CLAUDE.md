@@ -5,7 +5,7 @@ human talks to — that delegates real work to discipline **subagents** defined 
 `.claude/agents/`. Claude Code is the mechanism; this repo IS the config, and this repo is
 the project's only home. This file is the master index.
 [.claude/CLAUDE.md](.claude/CLAUDE.md) is this file's global twin, written to land at
-`~/.claude/CLAUDE.md` — copied there by hand, since no installer lives here yet.
+`~/.claude/CLAUDE.md` — installed there by [install.py](install.py).
 
 ## ⛔ Boundaries (foremost — never break)
 
@@ -78,6 +78,8 @@ Every hook command runs through one dispatcher —
 `python3 "<home>/.claude/scripts/run_hook.py" <name>`
 ([run_hook.py](.claude/scripts/run_hook.py)), which prefers the project's own
 `.claude/scripts/<name>.py` and falls back to the home copy, then `runpy`s it in-process.
+[install.py](install.py) renders that interpreter per platform when it installs
+`settings.json` — `python3` everywhere except Windows, where it becomes `python`.
 
 - SessionStart → [project_dirs.py](.claude/scripts/project_dirs.py) (creates
   `claude-memory/` + `claude-temp/` in the project root, gitignores both, and wires the
@@ -98,6 +100,10 @@ Every hook command runs through one dispatcher —
 ## Where things are
 
 What this repo holds: the config under [.claude/](.claude/), this file,
-[README.md](README.md), and the decision record in [docs/adr/](docs/adr/). The architecture
-notes, the installer and its Python package, the per-OS setup runbooks, and the task
-records are not here yet; further components land as development continues.
+[README.md](README.md), the installer [install.py](install.py) with its `tests/` and
+`pyproject.toml`, the task records in [tasks/](tasks/), and the decision record in
+[docs/adr/](docs/adr/). The gate runs here for the first time, with a **bare `mypy`** —
+`ruff check . && mypy && pytest tests/unit`: mypy's crawl skips dot-directories, so
+`pyproject.toml` lists `.claude/scripts` explicitly rather than the gate passing a path.
+The architecture notes and the per-OS setup runbooks are not here yet; further components
+land as development continues.

@@ -1,15 +1,11 @@
 # KASPER — project instructions & the complete config index
 
-KASPER (ADR-0024) is **one Claude Code session** — `<Project>'s KASPER`, the session the
+KASPER is **one Claude Code session** — `<Project>'s KASPER`, the session the
 human talks to — that delegates real work to discipline **subagents** defined in
-`.claude/agents/`. Claude Code is the mechanism; this repo IS the config. This file is the
-master index. There is no separate global config to maintain by hand: **running
-`python3 install.py` from this clone IS the global setup** — it merge-copies `.claude/`
-into your Claude home and renders `settings.json` per platform.
+`.claude/agents/`. Claude Code is the mechanism; this repo IS the config, and this repo is
+the project's only home. This file is the master index.
 [.claude/CLAUDE.md](.claude/CLAUDE.md) is this file's global twin, written to land at
-`~/.claude/CLAUDE.md`. Runbooks: [docs/deploy/fresh-mac.md](docs/deploy/fresh-mac.md),
-[fresh-linux.md](docs/deploy/fresh-linux.md),
-[fresh-windows.md](docs/deploy/fresh-windows.md).
+`~/.claude/CLAUDE.md` — copied there by hand, since no installer lives here yet.
 
 ## ⛔ Boundaries (foremost — never break)
 
@@ -43,7 +39,7 @@ one, else the global) decides what Bash auto-runs vs. prompts — never work aro
 7. [documentation](.claude/rules/documentation.md) — durable docs + append-only ADRs in
    `docs/`, living task docs in `tasks/`; drift is a defect.
 
-## KASPER — one session, seven agents (ADR-0024)
+## KASPER — one session, seven agents
 
 `/kasper` ([skills/kasper/SKILL.md](.claude/skills/kasper/SKILL.md)) turns the session it
 is typed in into the project's KASPER. It raises nothing: the disciplines are **subagents
@@ -101,8 +97,7 @@ Every hook command runs through one dispatcher —
 
 ## Where things are
 
-Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · decisions: [docs/adr/](docs/adr/)
-(ADR-0024 current; ADR-0017 records the fleet it replaced, and earlier ADRs record
-machinery deliberately deleted) · tasks: [tasks/](tasks/) · the installer:
-[install.py](install.py) + [kasper/install_config.py](kasper/install_config.py) (the whole
-Python package) · fresh-machine setup: [docs/deploy/](docs/deploy/).
+What this repo holds: the config under [.claude/](.claude/), this file,
+[README.md](README.md), and the decision record in [docs/adr/](docs/adr/). The architecture
+notes, the installer and its Python package, the per-OS setup runbooks, and the task
+records are not here yet; further components land as development continues.

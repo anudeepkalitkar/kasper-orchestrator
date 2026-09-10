@@ -19,7 +19,7 @@ Ask-first — every write outside the root, every time:
 - **`~/.claude/` (the global config): read freely, edit only with permission.** The sessions
   governed by the config never rewrite it silently. Config development happens in the
   kasper-orchestrator repo (where `.claude/` is the project's own tree), then lands
-  globally by running that clone's `install.py`.
+  globally by copying it into `~/.claude/`.
 - **Sensitive reads stay ask-first**: credentials and dotfiles (`~/.ssh`, `~/.aws`, `~/.gnupg`,
   `~/.kube`, `~/.netrc`, `~/.zshrc`, …), `/etc` and system config, anything obviously private.
   When in doubt whether a read is sensitive — ask.

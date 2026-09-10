@@ -5,34 +5,33 @@
 One Claude Code session that runs your project: you talk to it, it delegates the real work
 to discipline **subagents** — developer, tester, documentor, git-workflow, code-reviewer,
 researcher — and keeps the task doc while they work. Claude Code is the mechanism; KASPER
-is a skill, a set of agent definitions, a few hook scripts, and an installer. It runs on
-macOS, Linux and Windows from one clone.
+is a skill, a set of agent definitions, standing rules, and a few hook scripts.
 
 What KASPER *is* lives under `.claude/`: the `/kasper` skill in `.claude/skills/kasper/`,
 the agent definitions in `.claude/agents/` (one file per discipline — edit one and the
 next delegation uses it; its frontmatter pins that agent's model and tools), the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and
-the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). The code
-beside it is small: root `install.py` plus `kasper/install_config.py` — the settings
-renderer, and the whole Python package. Full design: `docs/ARCHITECTURE.md`; the decision
-trail, including the machinery that was built and deliberately deleted: `docs/adr/`.
+the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). That, this
+README, `CLAUDE.md`, and the decision record in `docs/adr/` are what this repo holds today.
+This repo is the project's only home; further components land here as development continues.
 
 ## Use
 
 ```bash
 git clone <repo> && cd kasper-orchestrator
-python3 install.py               # once per machine (`python install.py` on Windows)
 ```
 
-That is the install: it needs nothing but Python 3.12+ and a logged-in `claude`. It
-merge-copies this repo's `.claude/` into your Claude home and renders `settings.json` for
-your platform. Nothing you already have is overwritten — a file of yours that differs is
-kept, and the new version is written beside it as `<name>.kasper-new`. Because the config
-lands in your Claude home, the skill and the agents are available in **every** project;
-there is no per-project install step. Prereqs and per-OS details:
-`docs/deploy/fresh-mac.md`, `fresh-linux.md`, `fresh-windows.md`.
+`.claude/` is a working project-level config: copy it into a project, or start `claude`
+inside the clone, and the skill, the agents, the rules, the commands and the hooks are live
+for that project — `settings.json` resolves every hook through
+`$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py`, so the tree works wherever it sits. It
+needs nothing but Python 3.12+ and a logged-in `claude`. The hook commands name `python3`;
+on Windows, change them to `python`.
 
-Then, in any project:
+There is no installer here yet — nothing merges this config into your Claude home to make
+the skill and the agents available in **every** project — so it is per-project for now.
+
+Then, in that project:
 
 ```bash
 cd <project> && claude       # then type /kasper
@@ -49,10 +48,6 @@ stops.
 
 ## Develop (this repo)
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # once, for the gate's tools
-ruff check . && mypy . && pytest tests/unit    # green before any merge
-pytest tests/integration                       # the heavier tier, when touched
-```
-
-`feat/*` branches, checkpoint per subtask, PR to protected `development`.
+This repo is where KASPER is developed. `feat/*` branches, checkpoint per subtask, PR to
+protected `master`. The Python package, its tests, and the tooling that runs the gate on
+them are not here yet.

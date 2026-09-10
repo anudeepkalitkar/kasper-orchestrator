@@ -62,8 +62,8 @@ no direct push — no required status checks, since there is no CI), set as defa
 working but drop them the next time the repo's meta is touched. This repo
 (**kasper-orchestrator**) carries
 the workflow config itself and is versioned like any project repo — a remote, a protected
-mainline, feature branch + PR per task; there is no separate local-only config repo
-in this setup (superseding ADR-0009's original local-only stance).
+mainline, feature branch + PR per task; there is no separate config repo in this setup —
+this is the project's only home.
 
 Related: [[autonomous-workflow]] (checkpoints close each subtask loop; the gate convention;
 charters and the loop push exception), [[documentation]] (task doc tracks branch/commits/PR),

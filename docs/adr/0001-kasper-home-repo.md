@@ -94,3 +94,6 @@ The trade-offs accepted, plainly:
   credential paths lose that particular backstop — the ledger's guards still apply.
 - **The shipped hook commands name `python3`.** There is no installer here to render them per
   platform, so on Windows they must be changed to `python` by hand.
+
+*No longer true since ADR-0006 (2026-09-10): `install.py` renders the interpreter per
+platform when it installs `settings.json`.*

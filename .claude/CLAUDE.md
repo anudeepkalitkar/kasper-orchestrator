@@ -4,8 +4,9 @@ This is the global configuration for every project on this machine: the rules, a
 skills, commands, hooks, and permission ledger that govern all Claude Code sessions, with
 or without KASPER invoked. Inside a KASPER session the `/kasper` skill outranks this file
 where they conflict. The config is versioned in the kasper-orchestrator repo — edit it
-there, then copy the changed files into this home to bring it up to date. There is no
-installer in that repo yet, so the copy is done by hand.
+there, then run `python3 install.py` from that clone (`python install.py` on Windows) to
+install or update this home; `python3 install.py --status` reports whether this home still
+matches what was installed.
 
 ## ⛔ Boundaries (foremost — never break)
 
@@ -99,5 +100,6 @@ Every hook command runs through one dispatcher —
 
 Everything above lives beside this file, under `~/.claude/`. The source of truth is the
 kasper-orchestrator repo — the project's only home — whose decision record is in
-`docs/adr/`. Change the config there and copy it into this home; never hand-edit this home
-copy and expect it to survive, and never let a session rewrite it silently.
+`docs/adr/`. Change the config there and run its `install.py` to bring this home up to date;
+never hand-edit this home copy and expect it to survive — an install replaces the files it
+owns (backing up what it overwrites) — and never let a session rewrite it silently.

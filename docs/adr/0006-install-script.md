@@ -25,19 +25,26 @@ because it is what the implementation and its tests are built against.
 
 **1. Form.** `python3 install.py` after a clone (`python install.py` on Windows). No
 packaging, no dependencies; functions-first, fully typed, docstringed, per the code
-standards. Python 3.12 is the floor — the version the README already claims — pinned as
-`requires-python = ">=3.12"` and mypy's `python_version = "3.12"` (§12). Pure logic — merging, rendering, hashing, planning — is separated from I/O so the
-unit tier needs no disk.
+standards. Python 3.12 is the floor — the version the README already claims — enforced by
+ruff's `target-version = "py312"` and mypy's `python_version = "3.12"` (§12), not by a
+packaging pin: a repository that ships a script rather than a package carries no `[project]`
+table in `pyproject.toml` to hold one. Pure logic — merging, rendering, hashing, planning — is
+separated from I/O so the unit tier needs no disk.
 
 **2. CLI.** `install.py [--dry-run] [--status] [--uninstall] [--home PATH] [--python NAME]`.
 `--home` is the Claude home directory, defaulting to the user's `~/.claude`; it exists so
 tests and the Windows VM can target any directory. `--python` is the interpreter name
 rendered into the hook commands — `python` on Windows, `python3` elsewhere, by default.
-Exit **0** clean, **1** drift or something left behind, **2** usage.
+Exit **0** clean, **1** drift or something left behind, **2** usage. An error — a corrupt or
+malformed JSON file, a home that cannot be read — exits **1** as well, with the message on
+stderr and no traceback: drift and error share the code, and only a usage error is 2.
 
 **3. Owned files.** `agents/`, `commands/`, `rules/`, `scripts/`, `skills/`, `sounds/`, and
 `CLAUDE.md` are copied verbatim from the repository's `.claude/`, recursively, `__pycache__`
-excluded. These are KASPER's; every install overwrites them.
+excluded. These are KASPER's; every install overwrites them. An update also **prunes**: a
+file the previous manifest (§7) recorded that the source no longer ships is backed up (§6),
+deleted, and reported as `remove`, and a directory the removal leaves empty goes with it —
+so a rename or a deletion upstream leaves no stale copy behind for Claude Code to read.
 
 **4. `settings.json` is merged, never replaced.** The existing file is loaded, or taken as
 empty. Across **every** event in it, not only the events KASPER defines, existing handlers
@@ -58,16 +65,20 @@ and only the seed is the portable part.
 
 **6. Backup before overwrite.** Every existing owned file whose bytes differ from the
 incoming one, and `settings.json` and the ledger when they exist and would change, are copied
-first to `~/.claude/kasper-backup-<UTC timestamp>/<same relative path>`. A run that changes
-nothing creates no backup directory.
+first to `~/.claude/kasper-backup-<UTC timestamp>/<same relative path>`, the files an update
+prunes (§3) among them. A run that changes nothing creates no backup directory. A directory
+of that name that already exists gets a `-2`, `-3`, … suffix, so two runs inside the same
+second cannot overwrite each other's copies.
 
 **7. Manifest.** `~/.claude/kasper-manifest.json`, schema 1: source path, source git commit
 or null when unavailable, install time as UTC ISO, interpreter name, and a `files` map from
 each owned file's relative path to its SHA-256. `settings.json` and the ledger are absent
-from `files` — they are merged, not owned.
+from `files` — they are merged, not owned. It is also what the next install reads to find
+the files it should prune (§3): what the previous run recorded and the source no longer
+ships.
 
-**8. `--dry-run`** prints the plan — create, overwrite with backup, unchanged, merge — and
-writes nothing.
+**8. `--dry-run`** prints the plan — create, overwrite, unchanged, merge, remove — names
+every file it would back up, and writes nothing.
 
 **9. `--status`** reads the manifest and reports each recorded file ok, modified, or missing,
 and whether `settings.json` carries the KASPER hooks; "not installed" when there is no
@@ -88,7 +99,9 @@ verified on a real Windows 11 VM before the task closes, not assumed.
 **12. Tests.** `tests/unit/` for the pure functions with no I/O, `tests/integration/` for
 real runs against temporary home directories through `--home`. Ruff, mypy, and pytest are
 configured in a root `pyproject.toml` and installed into a gitignored virtualenv — no CI, per
-the git-workflow rule.
+the git-workflow rule. The gate here is **`ruff check . && mypy && pytest tests/unit`**:
+`mypy` takes no path, because its directory crawl skips dot-directories and would never see
+the hook scripts — `pyproject.toml` names `.claude/scripts` in its `files` list instead.
 
 ## Alternatives considered
 
@@ -119,8 +132,9 @@ the git-workflow rule.
   `.claude/permissions-ledger.json` when one exists and falls back to the home copy only
   otherwise, so a project carrying its own ledger is unaffected by the install and `--status`
   speaks only for the home copy. Reconciling the two is outside this decision.
-- **Tests and gate tooling enter this repository for the first time.** The rules' gate,
-  `ruff check . && mypy . && pytest tests/unit`, becomes literally runnable here.
+- **Tests and gate tooling enter this repository for the first time.** The rules' gate, in
+  this repo's form `ruff check . && mypy && pytest tests/unit` (§12), becomes literally
+  runnable here.
 - **Windows verification depends on a VM outside the repository** — a manual, slow gate. It
   also has something specific to catch: the default `--home` comes from `Path.home()`, which
   on Windows reads `USERPROFILE` and, since Python 3.8, never `HOME`, while the `$HOME` in the

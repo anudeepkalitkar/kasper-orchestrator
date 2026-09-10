@@ -18,7 +18,6 @@ import argparse
 import subprocess
 import sys
 
-
 # Shared branches in the promotion pipeline (git-workflow): never checkpoint directly here —
 # they're reached only via PRs (feature → development); qa kept as a legacy guard.
 PROTECTED_BRANCHES: frozenset[str] = frozenset({"master", "main", "development", "qa"})

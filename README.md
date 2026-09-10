@@ -55,8 +55,9 @@ home copy is what runs. A project can still carry its own `.claude/` to override
 the dispatcher prefers a project's own `.claude/scripts/<name>.py` and falls back to the
 home copy — but a project copy alone, with nothing installed at home, runs no hooks at all.
 
-It needs nothing but **Python 3.12+** and a logged-in `claude`. On Windows, Git Bash must be
-installed: Claude Code runs the hook commands through it.
+It needs nothing but **Python 3.12+** and a logged-in `claude` — on an older interpreter
+`install.py` says so and exits 1. On Windows, Git Bash must be installed: Claude Code runs
+the hook commands through it.
 
 Then, in any project:
 
@@ -82,8 +83,20 @@ protected `master`. The gate here is `ruff check . && mypy && pytest tests/unit`
 `.venv`:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install ruff mypy pytest
+python3 -m venv .venv && .venv/bin/pip install ruff mypy pytest         # macOS/Linux
+.venv/bin/ruff check . && .venv/bin/mypy && .venv/bin/pytest tests/unit
 ```
+
+```powershell
+py -m venv .venv                                                        # Windows
+.venv\Scripts\pip install ruff mypy pytest
+.venv\Scripts\ruff check .
+.venv\Scripts\mypy
+.venv\Scripts\pytest tests\unit
+```
+
+(venv puts the tools in `bin/` on POSIX and `Scripts\` on Windows; Windows PowerShell 5.1
+has no `&&`, so the gate runs a line at a time there — every line must exit 0.)
 
 `pytest tests/integration` runs the disk tier — real installs into temporary homes through
 `--home`.

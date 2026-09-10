@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# KASPER
+claude-memory/
+claude-temp/
+.DS_Store
+.claude/permission-unknowns.log

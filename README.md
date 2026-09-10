@@ -21,17 +21,20 @@ This repo is the project's only home; further components land here as developmen
 git clone <repo> && cd kasper-orchestrator
 ```
 
-`.claude/` is a working project-level config: copy it into a project, or start `claude`
-inside the clone, and the skill, the agents, the rules, the commands and the hooks are live
-for that project — `settings.json` resolves every hook through
-`$CLAUDE_PROJECT_DIR/.claude/scripts/run_hook.py`, so the tree works wherever it sits. It
-needs nothing but Python 3.12+ and a logged-in `claude`. The hook commands name `python3`;
-on Windows, change them to `python`.
+Installing is a hand copy — there is no installer here yet. Copy the contents of `.claude/`
+(`agents/`, `commands/`, `rules/`, `scripts/`, `skills/`, `sounds/`, `CLAUDE.md`,
+`permissions-ledger.json`) into your Claude home, `~/.claude/`, and **merge**
+`settings.json` into the one already there rather than replacing it — your own keys, the
+model pin and theme among them, live in that file. After that the skill, the agents, the
+rules, the commands and the hooks are live in **every** project: `settings.json` resolves
+every hook through `python3 "$HOME/.claude/scripts/run_hook.py"`, so the home copy is what
+runs. A project can still carry its own `.claude/` to override pieces — the dispatcher
+prefers a project's own `.claude/scripts/<name>.py` and falls back to the home copy — but a
+project copy alone, with nothing installed at home, runs no hooks at all. It needs nothing
+but Python 3.12+ and a logged-in `claude`. The hook commands name `python3`; on Windows,
+change them to `python`.
 
-There is no installer here yet — nothing merges this config into your Claude home to make
-the skill and the agents available in **every** project — so it is per-project for now.
-
-Then, in that project:
+Then, in any project:
 
 ```bash
 cd <project> && claude       # then type /kasper

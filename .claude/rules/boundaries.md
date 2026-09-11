@@ -8,9 +8,12 @@ is a serious error, not a minor slip.
 Allowed without asking:
 1. **The project root** — the folder where Claude/KASPER was summoned (the session's working
    directory), read/write, all subfolders. Everything the session creates stays inside it:
-   memory in `<root>/claude-memory/`, temp/scratch in `<root>/claude-temp/` — both created and
-   gitignored by the SessionStart hook (`project_dirs.py`), which also points the harness
-   memory path at the project's folder.
+   memory in `<root>/claude-memory/`, temp/scratch in `<root>/claude-temp/` — both created by
+   the SessionStart hook (`project_dirs.py`), which also keeps them, `/tasks/` and `/docs/adr/`,
+   out of git through the repo's **local** `.git/info/exclude` — never the project's shared
+   `.gitignore`, because a personal rule must not dirty someone else's checkout. The two doc
+   dirs are excluded only, created on demand. The hook also points the harness memory path at
+   the project's folder.
 2. **Reads anywhere non-sensitive** — library code, installed packages, docs.
 
 Ask-first — every write outside the root, every time:

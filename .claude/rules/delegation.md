@@ -11,8 +11,8 @@ cross-discipline routes back through KASPER.
   `tests/`, never commits.
 - **node-developer** — the TS/JS counterpart (server and client); same scope limits.
 - **tester** — authors tier-correct tests and proves changes work; the default **verifier**.
-- **documentor** — owns the written truth (`docs/`, README, `tasks/` docs); docs only, never
-  production code or tests.
+- **documentor** — owns the written truth (`docs/`, README, and the local-only `tasks/` docs);
+  docs only, never production code or tests.
 - **git-workflow** — the only agent that commits, pushes, or merges; re-runs the gate itself
   before committing, and merges wait on the human's explicit yes.
 - **code-reviewer** — reviews a diff/branch against the rules; ranked findings, doesn't edit.

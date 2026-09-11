@@ -1,5 +1,5 @@
 ---
-description: Scaffold an Architecture Decision Record under docs/adr/.
+description: Scaffold an Architecture Decision Record under docs/adr/ (local, never committed).
 argument-hint: <decision title>
 allowed-tools: Bash(ls docs/adr*), Bash(date *), Read, Write
 ---
@@ -36,4 +36,6 @@ We will <the decision, active voice>.
 
 4. Report the file path and a one-line summary. ADRs are **append-only** — to change a past decision,
    write a new ADR that supersedes it (set the old one's status to `Superseded by ADR-NNNN`), don't
-   rewrite history. Link this ADR from the current task doc's "Decisions & Notes" if one exists.
+   rewrite history. `docs/adr/` is excluded from git locally: the ADR is a local record, never
+   staged or pushed.
+   Link this ADR from the current task doc's "Decisions & Notes" if one exists.

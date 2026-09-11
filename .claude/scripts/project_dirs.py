@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """SessionStart hook — keep Claude's memory and temp files inside the project root.
 
-Creates ``<root>/claude-memory/`` and ``<root>/claude-temp/``, ensures both are gitignored,
-and points the harness memory directory (``~/.claude/projects/<slug>/memory``) at
-``<root>/claude-memory`` — so auto-memory reads and writes land in the project, travel with
-its backups, and die with it, never in the global state dir. Idempotent: safe to run on
+Creates ``<root>/claude-memory/`` and ``<root>/claude-temp/`` and points the harness memory
+directory (``~/.claude/projects/<slug>/memory``) at ``<root>/claude-memory`` — so auto-memory
+reads and writes land in the project, travel with its backups, and die with it, never in the
+global state dir. Those two dirs, plus ``/tasks/`` and ``/docs/adr/`` — the local task docs
+and decision records — are excluded locally via ``.git/info/exclude``, never in the project's
+``.gitignore``: they are one developer's working files, not a fact about the repo. The two
+doc dirs are only excluded, never created, and all four entries are root-anchored where it
+matters, so a project's own ``src/tasks/`` keeps being tracked. Idempotent: safe to run on
 every session start.
 
 The wiring is a symlink where the OS gives one for free, and an NTFS junction on Windows,
@@ -17,25 +21,69 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 if sys.platform == "win32":  # stdlib, but Windows-only — no import to make elsewhere
     import _winapi
 
-IGNORE_ENTRIES: tuple[str, str] = ("claude-memory/", "claude-temp/")
+IGNORE_ENTRIES: tuple[str, ...] = ("claude-memory/", "claude-temp/", "/tasks/", "/docs/adr/")
 
 
-def _ensure_gitignored(root: Path) -> None:
-    """Append the claude dirs to ``.gitignore`` when the root is a git repo missing them."""
-    if not (root / ".git").exists():
+def _exclude_file(root: Path) -> Path | None:
+    """Locate git's local-only exclude file for ``root``.
+
+    Asks git rather than assuming ``<root>/.git/info/exclude``: in a worktree or a submodule
+    ``.git`` is a file pointing elsewhere, and only git knows where the real dir lives.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        The path to ``info/exclude``, or None when ``root`` is not a git repo (or git is
+        not installed) — in which case there is nothing to exclude and the hook does nothing.
+    """
+    try:
+        done = subprocess.run(
+            ["git", "rev-parse", "--git-path", "info/exclude"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rel = done.stdout.strip()
+    if not rel:
+        return None
+    path = Path(rel)
+    return path if path.is_absolute() else root / path
+
+
+def _ensure_excluded(root: Path) -> None:
+    """Add the local-only dirs to ``.git/info/exclude`` — never the project's ``.gitignore``.
+
+    The entries are one developer's local state, so they belong in the repo's private exclude
+    file, which is never committed and never shows up in anyone else's diff. Bytes are read
+    and written raw so an existing file keeps its own newline style (CRLF stays CRLF).
+
+    Args:
+        root: The project root; a non-repo root is left untouched.
+    """
+    path = _exclude_file(root)
+    if path is None:
         return
-    gi = root / ".gitignore"
-    lines = gi.read_text(encoding="utf-8").splitlines() if gi.is_file() else []
-    missing = [e for e in IGNORE_ENTRIES if e not in lines and e.rstrip("/") not in lines]
-    if missing:
-        text = "\n".join(lines + missing) + "\n"
-        gi.write_text(text, encoding="utf-8")
+    text = path.read_bytes().decode("utf-8") if path.is_file() else ""
+    # Compare stripped of slashes so an existing ``tasks/`` counts as covering ``/tasks/``.
+    present = {line.strip().strip("/") for line in text.splitlines()}
+    missing = [e for e in IGNORE_ENTRIES if e.strip("/") not in present]
+    if not missing:
+        return
+    newline = "\r\n" if "\r\n" in text else "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = newline.join(text.splitlines() + missing) + newline
+    path.write_bytes(out.encode("utf-8"))
 
 
 def _harness_slug(root: Path) -> str:
@@ -131,7 +179,7 @@ def main() -> None:
     mem = root / "claude-memory"
     mem.mkdir(exist_ok=True)
     (root / "claude-temp").mkdir(exist_ok=True)
-    _ensure_gitignored(root)
+    _ensure_excluded(root)
     _link_harness_memory(root, mem)
 
 

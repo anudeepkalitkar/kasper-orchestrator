@@ -8,6 +8,7 @@ exercised through its real entrypoint, as a subprocess, against a temporary proj
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -56,7 +57,9 @@ def test_recorder_writes_non_ascii_prose_literally(repo_root: Path, tmp_path: Pa
         input=json.dumps(payload),
         capture_output=True,
         text=True,
-        env={"CLAUDE_PROJECT_DIR": str(project), "PATH": "/usr/bin:/bin:/usr/local/bin"},
+        # The real environment, so the recorder's `shutil.which("git")` finds git wherever
+        # this machine keeps it; only the ledger's location is overridden.
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
     )
     assert completed.returncode == 0, completed.stderr
     ledger_path = project / ".claude/permissions-ledger.json"

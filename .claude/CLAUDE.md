@@ -4,17 +4,19 @@ This is the global configuration for every project on this machine: the rules, a
 skills, commands, hooks, and permission ledger that govern all Claude Code sessions, with
 or without KASPER invoked. Inside a KASPER session the `/kasper` skill outranks this file
 where they conflict. The config is versioned in the kasper-orchestrator repo — edit it
-there, then copy the changed files into this home to bring it up to date. There is no
-installer in that repo yet, so the copy is done by hand.
+there, then run `python3 install.py` from that clone (`python install.py` on Windows) to
+install or update this home; `python3 install.py --status` reports whether this home still
+matches what was installed.
 
 ## ⛔ Boundaries (foremost — never break)
 
 Full rule: [rules/boundaries.md](rules/boundaries.md). Writes only inside the
 **summoned project root** (the folder where the session was started) — memory in
-`<root>/claude-memory/`, temp in `<root>/claude-temp/`, both gitignored; `~/.claude/` is
-read-free but edited only with permission; reads free except sensitive paths (ask first).
-Network reads free; network writes deny-by-default (standing exceptions: feature-branch
-pushes, `gh` ops on own PRs, calls the project's own code makes). The permission ledger
+`<root>/claude-memory/`, temp in `<root>/claude-temp/`, both kept out of git through the
+repo's local `.git/info/exclude`; `~/.claude/` is read-free but edited only with
+permission; reads free except sensitive paths (ask first). Network reads free; network
+writes deny-by-default (standing exceptions: feature-branch pushes, `gh` ops on own PRs,
+calls the project's own code makes). The permission ledger
 ([permissions-ledger.json](permissions-ledger.json) — the project's copy if it has
 one, else the global) decides what Bash auto-runs vs. prompts — never work around a prompt.
 
@@ -36,8 +38,9 @@ one, else the global) decides what Bash auto-runs vs. prompts — never work aro
    escalate only guarded ops, scope changes, cap exhaustion.
 6. [delegation](rules/delegation.md) — route work to the agent roster, fan out
    independent work in parallel; the writer never grades its own work.
-7. [documentation](rules/documentation.md) — durable docs + append-only ADRs in
-   `docs/`, living task docs in `tasks/`; drift is a defect.
+7. [documentation](rules/documentation.md) — durable docs in `docs/`, committed;
+   append-only ADRs in `docs/adr/` and living task docs in `tasks/` are local-only, kept out
+   of git, never committed; drift is a defect.
 
 ## KASPER — one session, seven agents
 
@@ -80,8 +83,9 @@ Every hook command runs through one dispatcher —
 `.claude/scripts/<name>.py` and falls back to the home copy, then `runpy`s it in-process.
 
 - SessionStart → [project_dirs.py](scripts/project_dirs.py) (creates
-  `claude-memory/` + `claude-temp/` in the project root, gitignores both, and wires the
-  harness memory path into the project).
+  `claude-memory/` + `claude-temp/` in the project root, excludes those two plus `/tasks/`
+  and `/docs/adr/` in the repo's local `.git/info/exclude` — never the shared `.gitignore` —
+  and wires the harness memory path into the project).
 - PreToolUse on Bash → [bash_permission_gate.py](scripts/bash_permission_gate.py)
   (ledger gate; quote/comment-aware; ask/unknown falls through to the native prompt).
 - PostToolUse on Bash → [permission_recorder.py](scripts/permission_recorder.py)
@@ -98,6 +102,8 @@ Every hook command runs through one dispatcher —
 ## Where things are
 
 Everything above lives beside this file, under `~/.claude/`. The source of truth is the
-kasper-orchestrator repo — the project's only home — whose decision record is in
-`docs/adr/`. Change the config there and copy it into this home; never hand-edit this home
-copy and expect it to survive, and never let a session rewrite it silently.
+kasper-orchestrator repo — the project's only home; its decision record lives in that
+clone's local, git-excluded `docs/adr/`, never in the repo itself. Change the config there
+and run its `install.py` to bring this home up to date; never hand-edit this home copy and
+expect it to survive — an install replaces the files it owns (backing up what it overwrites)
+— and never let a session rewrite it silently.

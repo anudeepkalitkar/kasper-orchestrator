@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""PreToolUse Bash permission gate — ledger-driven auto-allow; defer only what the ledger can't answer.
+"""PreToolUse Bash permission gate — ledger-driven auto-allow; defer only what the ledger
+can't answer.
 
 Reads the PreToolUse hook JSON on stdin and classifies the Bash command against the permission
 ledger (``.claude/permissions-ledger.json`` — the single source of truth: seeded allows, guarded
@@ -12,9 +13,10 @@ patterns, recorded user grants and denials, each with a note). Decision:
     subshell parens, ``$(...)``/backtick substitutions (recursively), env-var prefixes
     (``PATH=... cmd``), path heads (``.venv/bin/pytest`` -> ``pytest``) and wrapper commands
     (``xargs``/``timeout``/``env``/...) — every real command inside must match the ledger.
-  * anything unknown         -> no decision (the normal one-time prompt) and the command is logged to
-    ``.claude/permission-unknowns.log``. If the user then approves it, ``permission_recorder.py``
-    (PostToolUse) appends a grant to the ledger so the same command never prompts twice.
+  * anything unknown         -> no decision (the normal one-time prompt) and the command is
+    logged to ``.claude/permission-unknowns.log``. If the user then approves it,
+    ``permission_recorder.py`` (PostToolUse) appends a grant to the ledger so the same
+    command never prompts twice.
 
 It never *blocks*: the worst case for an unrecognised command is the normal one-time prompt. Only
 Bash is gated here — other tools are governed by settings.json. Splitting is quote-aware: ``;`` /
@@ -205,10 +207,10 @@ def _strip_heredocs(command: str) -> str:
 def _split_segments(command: str) -> list[str]:
     """Split on unquoted sequencing/pipe/background operators and newlines.
 
-    Split points: ``&&``, ``||``, ``|&``, ``|``, ``;``, background ``&`` (not the ``&`` in ``2>&1``),
-    and ``\\n`` (heredoc bodies are already stripped by ``_strip_heredocs``). Unquoted parens
-    (subshell/grouping) become whitespace so ``(cd a && ls)`` classifies cleanly. Anything inside
-    single or double quotes never splits.
+    Split points: ``&&``, ``||``, ``|&``, ``|``, ``;``, background ``&`` (not the ``&`` in
+    ``2>&1``), and ``\\n`` (heredoc bodies are already stripped by ``_strip_heredocs``).
+    Unquoted parens (subshell/grouping) become whitespace so ``(cd a && ls)`` classifies
+    cleanly. Anything inside single or double quotes never splits.
     """
     segments: list[str] = []
     buf: list[str] = []
@@ -277,7 +279,9 @@ def _strip_tokens(tokens: list[str]) -> list[str]:
 
 
 def _tokens_allowed(tokens: list[str], keys: list[str], depth: int = 0) -> bool:
-    """True when the (stripped) token list starts with an allowed key, is scaffolding, or unwraps to one."""
+    """True when the (stripped) token list starts with an allowed key, is scaffolding, or
+    unwraps to one.
+    """
     if depth > 5:
         return False
     tokens = _strip_tokens(tokens)
@@ -338,7 +342,9 @@ def _segment_allowed(segment: str, keys: list[str], patterns: list[dict[str, Any
 
 
 def command_parts(command: str) -> list[str]:
-    """Flatten a command into every classifiable part: outer segments + recursive substitution bodies."""
+    """Flatten a command into every classifiable part: outer segments + recursive
+    substitution bodies.
+    """
     joined = _strip_heredocs(command).replace("\\\n", " ")  # backslash-newline continuations
     outer, inners = _extract_substitutions(joined)
     parts = [seg for seg in _split_segments(outer) if seg.strip()]
@@ -367,7 +373,9 @@ def _decision(kind: str, reason: str) -> str:
 
 
 def main() -> None:
-    """Classify the incoming Bash command against the ledger and emit a permission decision (or none)."""
+    """Classify the incoming Bash command against the ledger and emit a permission decision
+    (or none).
+    """
     try:
         data = json.load(sys.stdin)
     except Exception:
@@ -388,7 +396,8 @@ def main() -> None:
         print(_decision("allow", "all parts covered by the permission ledger"))
         return
 
-    # Unknown: log it so /permit --review (or a user grant via the recorder) can promote it, then defer.
+    # Unknown: log it so /permit --review (or a user grant via the recorder) can promote it,
+    # then defer.
     try:
         UNKNOWN_LOG.parent.mkdir(parents=True, exist_ok=True)
         with UNKNOWN_LOG.open("a", encoding="utf-8") as handle:

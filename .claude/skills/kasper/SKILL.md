@@ -72,7 +72,8 @@ proven; if it matters, have it verified by a different agent.
 Non-trivial work gets a doc in `tasks/` (`/new-task` scaffolds it) and you are its single
 writer: subtasks with a runnable done-check, a cap, and owner ≠ verifier named; ticked only
 when the check actually ran green; cap-exhausted items recorded **blocked**, never done.
-It is the live state of the work, and the reason a fresh session can pick it up.
+It is the live state of the work, and the reason a fresh session can pick it up. `tasks/` is
+kept out of git in every project — the doc is local state, never committed, as is `docs/adr/`.
 
 ## Ending KASPER
 
@@ -82,6 +83,7 @@ When the human says to end, stop, or shut down KASPER:
    markdown file per durable fact plus its `MEMORY.md` index line; update an existing file
    rather than writing a near-duplicate. Record only what the next session cannot recover
    elsewhere — decisions made this session and why, work in flight or blocked, agreed next
-   steps in order. Do **not** record what git history, `tasks/`, or `docs/` already hold. A
+   steps in order. Do **not** record what git history or the local `tasks/` and `docs/` already
+   hold. A
    session with nothing durable to add writes nothing.
 2. **Confirm to the human** that the memory is written, then stop.

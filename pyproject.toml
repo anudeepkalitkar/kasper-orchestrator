@@ -1,0 +1,29 @@
+# Tooling config only — this repo ships a script (install.py), not a package,
+# so there is deliberately no [project] table (ADR-0006 §1, §12).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "claude-temp", "claude-memory"]
+# Anthropic's vendored Playwright examples ship as they are — not KASPER's code to relint.
+extend-exclude = [".claude/skills/webapp-testing"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# mypy's directory crawl skips dot-directories, so a bare `mypy` would never see the hook
+# scripts; naming the path puts them under the gate too.
+files = [".", ".claude/scripts"]
+exclude = "^(\\.venv|claude-temp|claude-memory)/"
+# The two conftest.py files share a basename; package-relative naming keeps them distinct
+# and matches how pytest's `pythonpath = ["."]` resolves `tests.helpers.*` at runtime.
+mypy_path = "."
+namespace_packages = true
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

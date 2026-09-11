@@ -30,10 +30,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 from bash_permission_gate import (  # noqa: E402
-    LEDGER_PATH,
     _BUILTINS,
     _ENV_ASSIGN,
     _WRAPPERS,
+    LEDGER_PATH,
     _strip_tokens,
     ask_match,
     ledger_allow_keys,
@@ -159,10 +159,7 @@ def main() -> None:
         data = json.load(sys.stdin)
     except Exception:
         return
-    if (
-        data.get("tool_name") != "Bash"
-        or data.get("permission_mode") == "bypassPermissions"
-    ):
+    if data.get("tool_name") != "Bash" or data.get("permission_mode") == "bypassPermissions":
         return
     command = (data.get("tool_input") or {}).get("command", "")
     if not command.strip():
@@ -196,7 +193,11 @@ def main() -> None:
 
     if added:
         tmp = LEDGER_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(ledger, indent=2) + "\n", encoding="utf-8")
+        # ensure_ascii=False keeps the ledger's prose as authored: the default would
+        # re-escape every em dash in _doc/note on each recorded grant, rewriting the whole
+        # file. install.py's writer agrees.
+        text = json.dumps(ledger, indent=2, ensure_ascii=False) + "\n"
+        tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, LEDGER_PATH)
 
 

@@ -5,16 +5,17 @@ human talks to — that delegates real work to discipline **subagents** defined 
 `.claude/agents/`. Claude Code is the mechanism; this repo IS the config, and this repo is
 the project's only home. This file is the master index.
 [.claude/CLAUDE.md](.claude/CLAUDE.md) is this file's global twin, written to land at
-`~/.claude/CLAUDE.md` — copied there by hand, since no installer lives here yet.
+`~/.claude/CLAUDE.md` — installed there by [install.py](install.py).
 
 ## ⛔ Boundaries (foremost — never break)
 
 Full rule: [rules/boundaries.md](.claude/rules/boundaries.md). Writes only inside the
 **summoned project root** (the folder where the session was started) — memory in
-`<root>/claude-memory/`, temp in `<root>/claude-temp/`, both gitignored; `~/.claude/` is
-read-free but edited only with permission; reads free except sensitive paths (ask first).
-Network reads free; network writes deny-by-default (standing exceptions: feature-branch
-pushes, `gh` ops on own PRs, calls the project's own code makes). The permission ledger
+`<root>/claude-memory/`, temp in `<root>/claude-temp/`, both kept out of git through the
+repo's local `.git/info/exclude`; `~/.claude/` is read-free but edited only with
+permission; reads free except sensitive paths (ask first). Network reads free; network
+writes deny-by-default (standing exceptions: feature-branch pushes, `gh` ops on own PRs,
+calls the project's own code makes). The permission ledger
 ([permissions-ledger.json](.claude/permissions-ledger.json) — the project's copy if it has
 one, else the global) decides what Bash auto-runs vs. prompts — never work around a prompt.
 
@@ -36,8 +37,9 @@ one, else the global) decides what Bash auto-runs vs. prompts — never work aro
    escalate only guarded ops, scope changes, cap exhaustion.
 6. [delegation](.claude/rules/delegation.md) — route work to the agent roster, fan out
    independent work in parallel; the writer never grades its own work.
-7. [documentation](.claude/rules/documentation.md) — durable docs + append-only ADRs in
-   `docs/`, living task docs in `tasks/`; drift is a defect.
+7. [documentation](.claude/rules/documentation.md) — durable docs in `docs/`, committed;
+   append-only ADRs in `docs/adr/` and living task docs in `tasks/` are local-only, kept out
+   of git, never committed; drift is a defect.
 
 ## KASPER — one session, seven agents
 
@@ -78,10 +80,13 @@ Every hook command runs through one dispatcher —
 `python3 "<home>/.claude/scripts/run_hook.py" <name>`
 ([run_hook.py](.claude/scripts/run_hook.py)), which prefers the project's own
 `.claude/scripts/<name>.py` and falls back to the home copy, then `runpy`s it in-process.
+[install.py](install.py) renders that interpreter per platform when it installs
+`settings.json` — `python3` everywhere except Windows, where it becomes `python`.
 
 - SessionStart → [project_dirs.py](.claude/scripts/project_dirs.py) (creates
-  `claude-memory/` + `claude-temp/` in the project root, gitignores both, and wires the
-  harness memory path into the project).
+  `claude-memory/` + `claude-temp/` in the project root, excludes those two plus `/tasks/`
+  and `/docs/adr/` in the repo's local `.git/info/exclude` — never the shared `.gitignore` —
+  and wires the harness memory path into the project).
 - PreToolUse on Bash → [bash_permission_gate.py](.claude/scripts/bash_permission_gate.py)
   (ledger gate; quote/comment-aware; ask/unknown falls through to the native prompt).
 - PostToolUse on Bash → [permission_recorder.py](.claude/scripts/permission_recorder.py)
@@ -98,6 +103,13 @@ Every hook command runs through one dispatcher —
 ## Where things are
 
 What this repo holds: the config under [.claude/](.claude/), this file,
-[README.md](README.md), and the decision record in [docs/adr/](docs/adr/). The architecture
-notes, the installer and its Python package, the per-OS setup runbooks, and the task
-records are not here yet; further components land as development continues.
+[README.md](README.md), and the installer [install.py](install.py) with its `tests/` and
+`pyproject.toml`. The decision record in `docs/adr/` and the task records in `tasks/` are local
+working files — never committed, so a clone carries neither. (This repo also lists all four
+local-only dirs in its own `.gitignore` — its own choice, not the hook's doing: the hook
+writes only git's local `.git/info/exclude`.) The gate runs here for the first time, with a
+**bare `mypy`** —
+`ruff check . && mypy && pytest tests/unit`: mypy's crawl skips dot-directories, so
+`pyproject.toml` lists `.claude/scripts` explicitly rather than the gate passing a path.
+The architecture notes and the per-OS setup runbooks are not here yet; further components
+land as development continues.

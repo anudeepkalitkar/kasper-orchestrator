@@ -35,7 +35,9 @@ mapping to **one git checkpoint** ([[git-workflow]]). Track them in the task doc
 Run the project's tests **directly** — no Makefile, no CI. **Python:**
 `ruff check . && mypy . && pytest tests/unit` · **Node:**
 `npx eslint . && npx tsc --noEmit && npm test`. Heavier tiers (`tests/integration/`, e2e) run
-before merging changes that touch what they cover ([[test-structure]]).
+before merging changes that touch what they cover ([[test-structure]]). A repo whose
+`pyproject.toml` names the files to check runs **bare `mypy`** instead of `mypy .` — a path
+argument overrides that `files` list, and mypy's crawl skips dot-directories.
 
 ## 5 · Execution guardrails
 1. **One item per iteration** — pick a single subtask/failure, finish it, move on. Fan out

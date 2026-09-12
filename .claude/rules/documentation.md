@@ -82,8 +82,9 @@ makes the doc resumable by any fresh session):
 ## Review
 <filled when done: outcome + how verified>
 ```
-Use absolute dates. Tick a subtask only when its done-check ran green; record cap-exhausted
-subtasks as **blocked**, never done.
+Use absolute dates, and write the done-check exactly as it runs in the repo — **bare `mypy`**
+where `pyproject.toml` names the files to check, `mypy .` otherwise. Tick a subtask only when
+its done-check ran green; record cap-exhausted subtasks as **blocked**, never done.
 
 ## How to apply
 - New project: create `docs/ARCHITECTURE.md`, `docs/adr/`, and (with a UI) `docs/design/` during

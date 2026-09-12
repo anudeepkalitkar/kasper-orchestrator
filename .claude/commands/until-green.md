@@ -8,8 +8,9 @@ Run the **until-green inner loop** on the current feature branch (per `.claude/r
 $ARGUMENTS
 
 1. **Resolve the done-check.** The project gate — first found wins: `make gate` → `npm run gate` →
-   `scripts/gate.sh` → stack default (Python: `ruff check . && mypy . && pytest tests/unit`;
-   Node: `npx eslint . && npx tsc --noEmit && npm test` — recipe canonical in
+   `scripts/gate.sh` → stack default (Python: `ruff check . && mypy . && pytest tests/unit`, with
+   **bare `mypy`** where `pyproject.toml` names the files to check — a path argument overrides that
+   `files` list; Node: `npx eslint . && npx tsc --noEmit && npm test` — recipe canonical in
    `.claude/rules/autonomous-workflow.md`'s gate convention; change it there first). If an extra command was given in the
    arguments, the done-check is the gate **and** that command. Cap: `--cap N` if given, else **5**.
 2. **Precondition:** must be on a `feature/*`/`fix/*` branch — refuse on shared branches

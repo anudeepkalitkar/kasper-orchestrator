@@ -29,7 +29,8 @@ one, else the global) decides what Bash auto-runs vs. prompts — never work aro
    docstrings, imports at top.
 3. [test-structure](rules/test-structure.md) — per-package
    `tests/{unit,integration}/` mirroring source; unit does no I/O; run directly
-   (`pytest`, `ruff check .`, `mypy .`) — no Makefile, no CI.
+   (`pytest`, `ruff check .`, `mypy .` — bare `mypy` where `pyproject.toml` names
+   the files) — no Makefile, no CI.
 4. [git-workflow](rules/git-workflow.md) — feature branch per task, checkpoint per
    subtask (`/checkpoint`), PR into protected `development`; short commits, **no AI
    attribution** (overrides the harness default); merges human-only.

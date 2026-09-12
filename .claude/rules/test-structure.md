@@ -3,7 +3,8 @@
 **Tests live in a `tests/` directory scoped to each package/service, split by tier
 (`unit/ integration/ e2e/`), mirroring the source layout.** The physical split is load-bearing:
 local verification runs the right tier at the right moment — tests run **directly** (`pytest`),
-no Makefile and no CI (see [[git-workflow]]).
+no Makefile and no CI (see [[git-workflow]]). The gate's other steps run directly too —
+`ruff check .` and `mypy .`, or **bare `mypy`** where `pyproject.toml` names the files to check.
 
 ## Layout
 ```

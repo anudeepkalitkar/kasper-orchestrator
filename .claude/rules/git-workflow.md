@@ -35,7 +35,9 @@ branch promotion and not an automated pipeline.
    iteration. **Merges and shared-branch pushes stay human-only, always.** Never force-push shared
    branches; never use interactive git flags (`-i`).
 5. **Local verification is the gate.** `ruff check . && mypy . && pytest tests/unit` must be green before
-   opening or updating a PR — a PR is an assertion that the gate ran green on that head. Run the
+   opening or updating a PR — a PR is an assertion that the gate ran green on that head. (A repo
+   whose `pyproject.toml` names the files to check runs **bare `mypy`** instead of `mypy .` — a
+   path argument overrides that `files` list, and mypy's crawl skips dot-directories.) Run the
    heavier tiers locally (`pytest tests/integration`, e2e) before merging changes that touch what they
    cover. There is no CI to catch what you skip — skipping verification is a defect, and the
    task digest reports exactly what ran.

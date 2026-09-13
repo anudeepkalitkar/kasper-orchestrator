@@ -64,8 +64,9 @@ def home_hooks() -> dict[str, list[dict[str, Any]]]:
     """A home hook block mixing user handlers with stale KASPER wiring.
 
     ``PreToolUse`` holds one of each (the KASPER group must be pruned, the user group
-    kept); ``SessionEnd`` holds a retired KASPER handler under an event KASPER no longer
-    defines (the whole event must go); ``UserPromptSubmit`` is purely the user's.
+    kept); ``SessionEnd`` holds a *retired* KASPER handler — a hook script name this
+    repository no longer ships — so the whole event must go, the marker deciding that and
+    not the event name; ``UserPromptSubmit`` is purely the user's.
     """
     return {
         "PreToolUse": [

@@ -11,6 +11,13 @@ doc dirs are only excluded, never created, and all four entries are root-anchore
 matters, so a project's own ``src/tasks/`` keeps being tracked. Idempotent: safe to run on
 every session start.
 
+Inside ``claude-temp/`` it also prepares this session's scratch — ``claude-temp/keep/``,
+which the SessionEnd sweep never touches, and ``claude-temp/sessions/<session_id>/``, so two
+agents' files in one project cannot collide by name — and prints both the scratch path and
+whatever an earlier session left behind into Claude's context (SessionStart stdout is context).
+It only reports those leftovers: deleting at session *start* is what ADR-0004 rejected, and
+the report is the only evidence a sweep ever failed (ADR-0007 §4).
+
 The wiring is a symlink where the OS gives one for free, and an NTFS junction on Windows,
 where creating a symlink needs Developer Mode or an elevated shell (D14). A junction is an
 ordinary user's right, so the hook never asks the user to change a system setting.
@@ -29,6 +36,12 @@ if sys.platform == "win32":  # stdlib, but Windows-only — no import to make el
     import _winapi
 
 IGNORE_ENTRIES: tuple[str, ...] = ("claude-memory/", "claude-temp/", "/tasks/", "/docs/adr/")
+
+#: The scratch root, and the two names inside it this hook owns — the same constants the
+#: SessionEnd sweep (``session_cleanup.py``) reads them by.
+SCRATCH_DIR: str = "claude-temp"
+KEEP_DIR: str = "keep"
+SESSIONS_DIR: str = "sessions"
 
 
 def _exclude_file(root: Path) -> Path | None:
@@ -167,8 +180,56 @@ def _link_harness_memory(root: Path, mem: Path) -> None:
     _link(harness_mem, mem)
 
 
+def _session_id(value: object) -> str | None:
+    """Validate the payload's ``session_id`` as a directory name.
+
+    The id is joined into a path, so it is accepted only as a plain name: no separators, no
+    drive, and no dot-only name. ``Path(value).name`` refuses the first two but *keeps*
+    ``".."`` — which would make the scratch path ``claude-temp/sessions/../``, i.e. the
+    scratch root itself — so dot-only names (``.``, ``..``, ``...``) are refused by name.
+
+    Args:
+        value: The raw ``session_id`` from the hook payload, of whatever type it arrived as.
+
+    Returns:
+        The id when it names exactly one new directory, else None (the session simply gets
+        no scratch dir — ADR-0007 §6: a malformed payload is never guessed at).
+    """
+    if not isinstance(value, str) or not value or set(value) == {"."}:
+        return None
+    return value if value == Path(value).name else None
+
+
+def _leftovers(temp: Path, session_id: str | None) -> list[str]:
+    """Name what an earlier session left in ``claude-temp/``, newest-agnostic and sorted.
+
+    Everything directly under the scratch root counts except ``keep/`` (reserved) and
+    ``sessions/`` (a container this hook writes into); inside ``sessions/``, every dir that
+    is not this session's is reported as ``sessions/<id>``, so a resumed or compacted
+    session does not report itself.
+
+    Args:
+        temp: The scratch root, ``<root>/claude-temp``.
+        session_id: This session's validated id, or None when the payload carried none —
+            in which case every session dir is somebody else's.
+
+    Returns:
+        The leftover names, sorted; empty when the scratch root is clean or unreadable.
+    """
+    try:
+        names = sorted(e.name for e in temp.iterdir() if e.name not in (KEEP_DIR, SESSIONS_DIR))
+        sessions = temp / SESSIONS_DIR
+        if sessions.is_dir():
+            names += sorted(
+                f"{SESSIONS_DIR}/{e.name}" for e in sessions.iterdir() if e.name != session_id
+            )
+    except OSError:
+        return []  # an unreadable scratch root is a report we cannot make, not a failure
+    return names
+
+
 def main() -> None:
-    """Create the project-local claude dirs and wire the harness memory path to them."""
+    """Create the project-local claude dirs, wire the harness memory path, report scratch."""
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
@@ -178,7 +239,22 @@ def main() -> None:
         return  # summoned inside the global config itself — nothing to wire
     mem = root / "claude-memory"
     mem.mkdir(exist_ok=True)
-    (root / "claude-temp").mkdir(exist_ok=True)
+    temp = root / SCRATCH_DIR
+    temp.mkdir(exist_ok=True)
+    session_id = _session_id(data.get("session_id"))
+    leftovers = _leftovers(temp, session_id)  # read before this session adds its own dirs
+    (temp / KEEP_DIR).mkdir(exist_ok=True)
+    if session_id is not None:
+        (temp / SESSIONS_DIR / session_id).mkdir(parents=True, exist_ok=True)
+        print(
+            f"Session scratch: {SCRATCH_DIR}/{SESSIONS_DIR}/{session_id}/ — {SCRATCH_DIR}/ is "
+            f"swept at session end; {SCRATCH_DIR}/{KEEP_DIR}/ survives."
+        )
+    if leftovers:
+        print(
+            f"Leftovers in {SCRATCH_DIR}/ from an earlier session (swept at this session's "
+            f"end): {', '.join(leftovers)}"
+        )
     _ensure_excluded(root)
     _link_harness_memory(root, mem)
 

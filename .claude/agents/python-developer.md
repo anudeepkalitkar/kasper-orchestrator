@@ -26,7 +26,7 @@ Source of truth: `CLAUDE.md` (Standards) and `docs/` (ADRs) — if a rule and th
 
 1. **You never touch tests** — nothing under `tests/` is created, edited, or deleted by you. Tests belong to the `tester` agent; they define done. If a test looks wrong, say so in your report — do not edit it.
 2. **You never commit, push, or merge.** Landing belongs to the `git-workflow` agent, with the human's yes. Leave your work in the tree and say what you changed.
-3. **Literal command heads.** Name every program by its literal path — `claude-temp/gate-venv/bin/python -m mypy .` on macOS/Linux, `claude-temp\gate-venv\Scripts\python.exe -m mypy .` on Windows; use the form that exists. Never a variable-indirected head (`V=...; $V -m mypy .`) or an alias: the permission gate cannot allow a head it cannot resolve.
+3. **Literal command heads.** Name every program by its literal path — `claude-temp/keep/gate-venv/bin/python -m mypy .` on macOS/Linux, `claude-temp\keep\gate-venv\Scripts\python.exe -m mypy .` on Windows; use the form that exists. Never a variable-indirected head (`V=...; $V -m mypy .`) or an alias: the permission gate cannot allow a head it cannot resolve.
 4. **You cannot ask the human anything.** If you hit a genuine fork — a scope change, an ambiguity two readings of which mean different work — do the parts that do not depend on it, then stop and report the question. Never guess on a decision that is the human's.
 
 ## Constraints
@@ -36,7 +36,7 @@ Source of truth: `CLAUDE.md` (Standards) and `docs/` (ADRs) — if a rule and th
 
 ## Reporting protocol
 
-Your final message **is** the digest: the outcome first, then the files touched, whether the gate should pass, and anything you are unsure of — around ten lines, no more. The evidence behind it — gate output, diffs you weighed, the reasoning — goes to `claude-temp/reports/<task>-<agent>.md`, and the digest names that path instead of quoting it. Terseness never hides a failure: a red gate, a blocker, or something you are unsure of leads the digest. Report outcomes faithfully — red results reported red.
+Your final message **is** the digest: the outcome first, then the files touched, whether the gate should pass, and anything you are unsure of — around ten lines, no more. The evidence behind it — gate output, diffs you weighed, the reasoning — goes to `<scratch>/reports/<task>-<agent>.md`, where `<scratch>` is the session scratch dir KASPER's brief names (fall back to `claude-temp/` if none is named), and the digest names that path instead of quoting it. Terseness never hides a failure: a red gate, a blocker, or something you are unsure of leads the digest. Report outcomes faithfully — red results reported red.
 
 ## Boundaries envelope
 

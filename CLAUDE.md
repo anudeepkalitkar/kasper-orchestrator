@@ -98,8 +98,9 @@ Every hook command runs through one dispatcher —
 - PostToolUse on Bash → [permission_recorder.py](.claude/scripts/permission_recorder.py)
   (approved commands become grants — validated, junk-proof); on Edit/Write →
   [autoformat.py](.claude/scripts/autoformat.py) (ruff format).
-- Notification/Stop → [notify.py](.claude/scripts/notify.py) (desktop banner: macOS,
-  Linux `notify-send`, Windows toast).
+- Notification/Stop → [notify.py](.claude/scripts/notify.py) (a native system sound per
+  event — macOS Glass/Funk, the Windows and freedesktop equivalents — with the bundled
+  `notify.wav` as the fallback).
 - Command helpers: [git_checkpoint.py](.claude/scripts/git_checkpoint.py) (backs
   `/checkpoint`) · [new_task.py](.claude/scripts/new_task.py) (backs `/new-task`).
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,

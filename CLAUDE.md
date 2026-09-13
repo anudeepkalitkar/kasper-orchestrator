@@ -11,13 +11,14 @@ the project's only home. This file is the master index.
 
 Full rule: [rules/boundaries.md](.claude/rules/boundaries.md). Writes only inside the
 **summoned project root** (the folder where the session was started) — memory in
-`<root>/claude-memory/`, temp in `<root>/claude-temp/`, both kept out of git through the
-repo's local `.git/info/exclude`; `~/.claude/` is read-free but edited only with
-permission; reads free except sensitive paths (ask first). Network reads free; network
-writes deny-by-default (standing exceptions: feature-branch pushes, `gh` ops on own PRs,
-calls the project's own code makes). The permission ledger
-([permissions-ledger.json](.claude/permissions-ledger.json) — the project's copy if it has
-one, else the global) decides what Bash auto-runs vs. prompts — never work around a prompt.
+`<root>/claude-memory/`, temp in `<root>/claude-temp/` (swept at session end except
+`claude-temp/keep/`), both kept out of git through the repo's local `.git/info/exclude`;
+`~/.claude/` is read-free but edited only with permission; reads free except sensitive
+paths (ask first). Network reads free; network writes deny-by-default (standing exceptions:
+feature-branch pushes, `gh` ops on own PRs, calls the project's own code makes). The
+permission ledger ([permissions-ledger.json](.claude/permissions-ledger.json) — the project's
+copy if it has one, else the global) decides what Bash auto-runs vs. prompts — never work
+around a prompt.
 
 ## The rules ([rules/](.claude/rules/) — all authoritative)
 
@@ -87,7 +88,11 @@ Every hook command runs through one dispatcher —
 - SessionStart → [project_dirs.py](.claude/scripts/project_dirs.py) (creates
   `claude-memory/` + `claude-temp/` in the project root, excludes those two plus `/tasks/`
   and `/docs/adr/` in the repo's local `.git/info/exclude` — never the shared `.gitignore` —
-  and wires the harness memory path into the project).
+  wires the harness memory path into the project, and creates `claude-temp/keep/` plus
+  `claude-temp/sessions/<id>/`, printing the scratch path and any leftovers into context).
+- SessionEnd → [session_cleanup.py](.claude/scripts/session_cleanup.py) (empties
+  `claude-temp/` except `keep/`; removes clean, unlocked worktrees under `.claude/worktrees/`
+  and `claude-temp/`; prunes worktree metadata; never deletes a dirty worktree or a branch).
 - PreToolUse on Bash → [bash_permission_gate.py](.claude/scripts/bash_permission_gate.py)
   (ledger gate; quote/comment-aware; ask/unknown falls through to the native prompt).
 - PostToolUse on Bash → [permission_recorder.py](.claude/scripts/permission_recorder.py)

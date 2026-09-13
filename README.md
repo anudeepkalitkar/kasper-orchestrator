@@ -69,12 +69,17 @@ cd <project> && claude       # then type /kasper
 
 That session is now `<Project>'s KASPER`. Ask it for anything: it answers questions
 directly and delegates real work, one task per agent, reporting back tersely — a short
-digest, with the full evidence written to `claude-temp/reports/<task>-<agent>.md`.
-Permission prompts — including ones raised inside an agent — surface right there for you
-to answer; the ledger decides what never needs asking. The agent that writes code is never
-the one that verifies it, only `git-workflow` commits, and **merges always wait for your
-explicit yes**. Tell KASPER to end when you're done: it writes the session's memory and
-stops.
+digest, with the full evidence written under the session's own scratch dir —
+`claude-temp/sessions/<session-id>/`, created by the SessionStart hook and named in the
+session's context, reports landing in its `reports/`. Permission prompts — including
+ones raised inside an agent — surface right there for you to answer; the ledger decides
+what never needs asking. The agent that writes code is never the one that verifies it,
+only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
+KASPER to end when you're done: it moves anything a later session needs into
+`claude-temp/keep/`, writes the session's memory and stops. A SessionEnd hook empties
+`claude-temp/` — everything but `keep/` — at every session end, `/clear` and a logout
+included, and removes clean, unlocked git worktrees under `.claude/worktrees/` or
+`claude-temp/`, leaving dirty or locked ones — and every branch — alone.
 
 ## Develop (this repo)
 

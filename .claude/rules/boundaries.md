@@ -13,9 +13,8 @@ Allowed without asking:
    out of git through the repo's **local** `.git/info/exclude` — never the project's shared
    `.gitignore`, because a personal rule must not dirty someone else's checkout. The two doc
    dirs are excluded only, created on demand. The hook also points the harness memory path at
-   the project's folder. Scratch is disposable: the SessionEnd hook (`session_cleanup.py`)
-   empties `claude-temp/` at every session end except `claude-temp/keep/`, so anything a later
-   session needs is moved there before the session ends.
+   the project's folder. Nothing cleans scratch up: `claude-temp/` accumulates across
+   sessions, and emptying it is the human's to do, by hand, whenever they choose.
 2. **Reads anywhere non-sensitive** — library code, installed packages, docs.
 
 Ask-first — every write outside the root, every time:

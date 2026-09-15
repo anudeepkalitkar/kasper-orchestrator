@@ -75,11 +75,9 @@ session's context, reports landing in its `reports/`. Permission prompts — inc
 ones raised inside an agent — surface right there for you to answer; the ledger decides
 what never needs asking. The agent that writes code is never the one that verifies it,
 only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
-KASPER to end when you're done: it moves anything a later session needs into
-`claude-temp/keep/`, writes the session's memory and stops. A SessionEnd hook empties
-`claude-temp/` — everything but `keep/` — at every session end, `/clear` and a logout
-included, and removes clean, unlocked git worktrees under `.claude/worktrees/` or
-`claude-temp/`, leaving dirty or locked ones — and every branch — alone.
+KASPER to end when you're done: it writes the session's memory and stops. Nothing is
+cleaned up for you — `claude-temp/` accumulates across sessions, and clearing it is
+yours to do whenever you like.
 
 ## Develop (this repo)
 

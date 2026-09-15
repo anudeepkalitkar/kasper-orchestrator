@@ -83,20 +83,11 @@ kept out of git in every project — the doc is local state, never committed, as
 
 When the human says to end, stop, or shut down KASPER:
 
-1. **Promote what a later session needs into `claude-temp/keep/`.** The SessionEnd hook
-   empties `claude-temp/` — every session scratch dir, every agent report, everything
-   but `keep/` — the moment this session ends, and it ends on every reason the harness
-   reports: `/clear` and a logout sweep exactly as a deliberate shutdown does, so
-   promote before those too. Move the gate venv, a prepared environment, or evidence not
-   yet written up there now. Nothing in `claude-temp/` is ever deleted *during* a
-   session, so this is the only moment promotion costs anything; a killed session
-   promotes nothing, which is why durable evidence goes to `tasks/`, `docs/`, or
-   `claude-memory/` as it happens rather than at the end.
-2. **Write the session memory.** Write to `claude-memory/` in the project root: one
+1. **Write the session memory.** Write to `claude-memory/` in the project root: one
    markdown file per durable fact plus its `MEMORY.md` index line; update an existing file
    rather than writing a near-duplicate. Record only what the next session cannot recover
    elsewhere — decisions made this session and why, work in flight or blocked, agreed next
    steps in order. Do **not** record what git history or the local `tasks/` and `docs/` already
    hold. A
    session with nothing durable to add writes nothing.
-3. **Confirm to the human** that the memory is written, then stop.
+2. **Confirm to the human** that the memory is written, then stop.

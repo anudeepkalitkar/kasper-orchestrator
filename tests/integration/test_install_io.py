@@ -1093,7 +1093,11 @@ def test_uninstall_leaves_a_symlinked_owned_directory_and_its_target_alone(
     assert (outside / "mine.wav").read_bytes() == b"mine"
 
 
-# ---------------------------------------------------------------- the SessionEnd sweep
+# ---------------------------------------------------------------- SessionEnd (KASPER owns none)
+
+#: A KASPER ``SessionEnd`` handler from before the sweep was retired — a home installed
+#: against an older checkout still carries exactly this, and an install must strip it (§4).
+_STALE_SWEEP = 'python3 "$HOME/.claude/scripts/run_hook.py" session_cleanup'
 
 
 def _session_end_handlers(home: Path) -> list[dict[str, Any]]:
@@ -1109,53 +1113,35 @@ def _session_end_handlers(home: Path) -> list[dict[str, Any]]:
     return [handler for group in groups for handler in group["hooks"]]
 
 
-def test_the_installed_session_end_handler_keeps_its_sixty_second_timeout(
-    repo_root: Path, home: Path
-) -> None:
-    """ADR-0007 §1: without the timeout the sweep runs inside SessionEnd's 1.5s budget."""
+def test_an_install_wires_no_session_end_handler_of_its_own(repo_root: Path, home: Path) -> None:
+    """The sweep is retired: KASPER defines nothing on ``SessionEnd`` and installs no script."""
     _run_install(repo_root, home)
-    handlers = _session_end_handlers(home)
-    assert [handler["command"] for handler in handlers] == [
-        'python3 "$HOME/.claude/scripts/run_hook.py" session_cleanup'
-    ]
-    assert handlers[0]["timeout"] == 60
+    assert _session_end_handlers(home) == []
+    assert not (home / "scripts" / "session_cleanup.py").exists()
 
 
-def test_an_install_keeps_a_users_own_session_end_handler_beside_the_sweep(
-    repo_root: Path, home: Path
-) -> None:
-    """§4: KASPER now defines ``SessionEnd`` too — the user's handler is still not KASPER's."""
+def test_an_install_keeps_a_users_own_session_end_handler(repo_root: Path, home: Path) -> None:
+    """§4: an event KASPER defines nothing on is still merged, not replaced."""
     home.mkdir(parents=True)
     mine = {"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "archive.sh"}]}]}}
     (home / install.SETTINGS_NAME).write_text(json.dumps(mine), encoding="utf-8")
     _run_install(repo_root, home)
-    commands = [handler["command"] for handler in _session_end_handlers(home)]
-    assert commands[0] == "archive.sh"
-    assert commands[1].endswith("session_cleanup")
+    assert [handler["command"] for handler in _session_end_handlers(home)] == ["archive.sh"]
 
 
-def test_a_second_install_does_not_double_the_session_end_handler(
-    repo_root: Path, installed_home: Path
+def test_an_install_strips_a_stale_sweep_handler_beside_the_users_own(
+    repo_root: Path, home: Path
 ) -> None:
-    """The strip runs before the append, so re-installing replaces its own wiring."""
-    _run_install(repo_root, installed_home)
-    assert len(_session_end_handlers(installed_home)) == 1
-
-
-def test_status_is_clean_over_an_install_carrying_the_session_end_hook(
-    installed_home: Path,
-) -> None:
-    """§9: the new event is recorded like every other — a fresh install reports no drift."""
-    out = io.StringIO()
-    assert install.status(installed_home, out=out) == 0
-    assert (installed_home / "scripts" / "session_cleanup.py").is_file()
-
-
-def test_uninstall_removes_the_session_end_event_and_its_script(
-    installed_home: Path, fixed_now: datetime
-) -> None:
-    """§10: the handler is KASPER's only one there, so the whole event goes with it."""
-    install.uninstall(installed_home, now=fixed_now, out=io.StringIO())
-    assert _session_end_handlers(installed_home) == []
-    assert "SessionEnd" not in _settings(installed_home)["hooks"]
-    assert not (installed_home / "scripts" / "session_cleanup.py").exists()
+    """§4: the marker decides — KASPER's retired wiring goes, the user's neighbour stays."""
+    home.mkdir(parents=True)
+    mixed = {
+        "hooks": {
+            "SessionEnd": [
+                {"hooks": [{"type": "command", "command": "archive.sh"}]},
+                {"hooks": [{"type": "command", "command": _STALE_SWEEP, "timeout": 60}]},
+            ]
+        }
+    }
+    (home / install.SETTINGS_NAME).write_text(json.dumps(mixed), encoding="utf-8")
+    _run_install(repo_root, home)
+    assert [handler["command"] for handler in _session_end_handlers(home)] == ["archive.sh"]

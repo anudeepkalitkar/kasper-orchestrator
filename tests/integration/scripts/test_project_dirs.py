@@ -3,11 +3,11 @@
 ``main()`` is never called **in this process**: it links ``~/.claude/projects/<slug>/memory``
 through ``Path.home()``, which the script offers no argument to redirect, so an in-process
 call would write into (and ``rmtree`` inside) the user's real global config. The pure
-branching — ``_ensure_excluded``, ``_leftovers``, ``_session_id`` — is exercised directly,
-and the few end-to-end facts that only ``main()`` can show (ADR-0007 §4: ``keep/`` and
-``sessions/<id>/`` are created, the two report lines are printed, nothing is deleted) come
-from running the script as its own process with ``HOME`` pointed at a temporary directory,
-where the real global config is out of reach by construction.
+branching — ``_ensure_excluded``, ``_session_id`` — is exercised directly, and the few
+end-to-end facts that only ``main()`` can show (``sessions/<id>/`` is created, the one
+scratch line is printed, and nothing else in ``claude-temp/`` is created, reported, or
+deleted) come from running the script as its own process with ``HOME`` pointed at a
+temporary directory, where the real global config is out of reach by construction.
 
 Integration, not unit: real ``git init`` repositories and real bytes on disk.
 """
@@ -20,16 +20,14 @@ from types import ModuleType
 
 import pytest
 
-from tests.helpers.cli import line_with
 from tests.helpers.files import tree_bytes
 from tests.helpers.hooks import load_script, run_script
 
 #: What the hook adds, in order (``project_dirs.IGNORE_ENTRIES``).
 ENTRIES = ["claude-memory/", "claude-temp/", "/tasks/", "/docs/adr/"]
 
-#: The scratch root and the two names inside it the hook owns (``project_dirs`` constants).
+#: The scratch root and the one container inside it the hook owns (``project_dirs``).
 SCRATCH = "claude-temp"
-KEEP = "keep"
 SESSIONS = "sessions"
 
 
@@ -43,14 +41,6 @@ def project_dirs(repo_root: Path) -> ModuleType:
 def fake_home(tmp_path: Path) -> Path:
     """The directory ``HOME`` points at for an end-to-end run — never the user's own."""
     return tmp_path / "home"
-
-
-@pytest.fixture
-def scratch(tmp_path: Path) -> Path:
-    """A project root holding an empty ``claude-temp/``, ready to be populated per test."""
-    temp = tmp_path / "proj" / SCRATCH
-    temp.mkdir(parents=True)
-    return temp
 
 
 @pytest.fixture
@@ -140,50 +130,6 @@ def test_a_directory_that_is_not_a_repo_gets_nothing(
     assert list(tmp_path.iterdir()) == []
 
 
-# ---------------------------------------------------------------- leftovers (ADR-0007 §4)
-
-
-def test_leftovers_ignores_keep_and_this_sessions_own_directory(
-    project_dirs: ModuleType, scratch: Path
-) -> None:
-    """The reserved dir and the caller's own session dir are not somebody's leavings."""
-    (scratch / KEEP).mkdir()
-    (scratch / SESSIONS / "mine").mkdir(parents=True)
-    assert project_dirs._leftovers(scratch, "mine") == []
-
-
-def test_leftovers_reports_other_session_ids_and_top_level_entries(
-    project_dirs: ModuleType, scratch: Path
-) -> None:
-    """Everything else is reported: plain entries by name, session dirs path-qualified."""
-    (scratch / KEEP).mkdir()
-    (scratch / "junkdir").mkdir()
-    (scratch / "junk.txt").write_text("junk\n", encoding="utf-8")
-    (scratch / SESSIONS / "mine").mkdir(parents=True)
-    (scratch / SESSIONS / "other").mkdir()
-    assert project_dirs._leftovers(scratch, "mine") == [
-        "junk.txt",
-        "junkdir",
-        "sessions/other",
-    ]
-
-
-def test_leftovers_without_a_session_id_reports_every_session_directory(
-    project_dirs: ModuleType, scratch: Path
-) -> None:
-    """With no id to exempt, every session dir belongs to somebody else."""
-    (scratch / SESSIONS / "mine").mkdir(parents=True)
-    (scratch / SESSIONS / "other").mkdir()
-    assert project_dirs._leftovers(scratch, None) == ["sessions/mine", "sessions/other"]
-
-
-def test_leftovers_of_an_unreadable_scratch_root_is_a_report_not_a_failure(
-    project_dirs: ModuleType, tmp_path: Path
-) -> None:
-    """A scratch root that cannot be listed reports nothing rather than raising."""
-    assert project_dirs._leftovers(tmp_path / "not-there", "mine") == []
-
-
 # ---------------------------------------------------------------- session id (ADR-0007 §6)
 
 
@@ -202,77 +148,71 @@ def test_a_bare_name_is_accepted_as_the_session_id(project_dirs: ModuleType, val
     assert project_dirs._session_id(value) == value
 
 
-# ---------------------------------------------------------------- the scratch dirs, end to end
+# ---------------------------------------------------------------- the scratch dir, end to end
+
+#: Everything a SessionStart prints for session ``s1`` — one line, nothing else.
+SCRATCH_LINE = f"Session scratch: {SCRATCH}/{SESSIONS}/s1/\n"
 
 
-def test_session_start_creates_keep_and_the_sessions_directory(
+def test_session_start_creates_this_sessions_directory_and_nothing_else_in_scratch(
     repo_root: Path, tmp_path: Path, fake_home: Path
 ) -> None:
-    """§4: both dirs exist after a start, so the sweep and the reports have their places."""
+    """The session gets ``sessions/<id>/``; no ``keep/`` — there is no sweep to survive."""
     root = tmp_path / "proj"
     root.mkdir()
     result = run_script(
         repo_root, "project_dirs", {"session_id": "s1", "cwd": str(root)}, fake_home
     )
     assert result.returncode == 0, result.stderr
-    assert (root / SCRATCH / KEEP).is_dir()
     assert (root / SCRATCH / SESSIONS / "s1").is_dir()
+    assert [entry.name for entry in (root / SCRATCH).iterdir()] == [SESSIONS]
 
 
-def test_session_start_prints_the_scratch_line(
+def test_session_start_prints_exactly_the_scratch_line(
     repo_root: Path, tmp_path: Path, fake_home: Path
 ) -> None:
-    """§4: SessionStart stdout is context — the session is told where its scratch is."""
+    """SessionStart stdout is context: the scratch path, with no promise of a sweep."""
     root = tmp_path / "proj"
     root.mkdir()
     result = run_script(
         repo_root, "project_dirs", {"session_id": "s1", "cwd": str(root)}, fake_home
     )
-    assert line_with(result.stdout, "Session scratch:", "claude-temp/sessions/s1/") is not None
+    assert result.stdout == SCRATCH_LINE
 
 
-def test_a_clean_scratch_root_produces_no_leftover_line(
+def test_an_earlier_sessions_leavings_are_neither_reported_nor_touched(
     repo_root: Path, tmp_path: Path, fake_home: Path
 ) -> None:
-    """The second line appears only when there is something to report."""
-    root = tmp_path / "proj"
-    root.mkdir()
-    result = run_script(
-        repo_root, "project_dirs", {"session_id": "s1", "cwd": str(root)}, fake_home
-    )
-    assert "Leftovers" not in result.stdout
-
-
-def test_a_killed_sessions_leavings_are_reported_and_left_on_disk(
-    repo_root: Path, tmp_path: Path, fake_home: Path
-) -> None:
-    """§4: SessionStart reports and stops there — deleting at start is what ADR-0004 rejected."""
+    """Older scratch entries are now ordinary files: no leftovers line, and nothing deleted."""
     root = tmp_path / "proj"
     temp = root / SCRATCH
     (temp / "reports").mkdir(parents=True)
     (temp / "reports" / "evidence.md").write_text("# from a killed session\n", encoding="utf-8")
+    (temp / SESSIONS / "older").mkdir(parents=True)
+    (temp / SESSIONS / "older" / "notes.md").write_text("# older\n", encoding="utf-8")
     before = tree_bytes(temp)
     result = run_script(
         repo_root, "project_dirs", {"session_id": "s1", "cwd": str(root)}, fake_home
     )
-    assert line_with(result.stdout, "Leftovers in claude-temp/", "reports") is not None
+    assert result.stdout == SCRATCH_LINE
+    assert not (temp / "keep").exists()
     assert tree_bytes(temp) == before
 
 
-def test_a_resumed_session_does_not_report_its_own_directory(
+def test_a_resumed_session_prints_the_same_single_line(
     repo_root: Path, tmp_path: Path, fake_home: Path
 ) -> None:
-    """A second start under the same id — resume or compact — reports the same two lines."""
+    """A second start under the same id — resume or compact — reports exactly what the first did."""
     root = tmp_path / "proj"
     root.mkdir()
     payload = {"session_id": "s1", "cwd": str(root)}
     first = run_script(repo_root, "project_dirs", payload, fake_home)
     second = run_script(repo_root, "project_dirs", payload, fake_home)
-    assert second.stdout == first.stdout
-    assert "Leftovers" not in second.stdout
+    assert first.stdout == SCRATCH_LINE
+    assert second.stdout == SCRATCH_LINE
 
 
-def test_a_payload_with_an_unusable_session_id_still_gets_keep_but_no_scratch_line(
+def test_a_payload_with_an_unusable_session_id_gets_no_scratch_dir_and_prints_nothing(
     repo_root: Path, tmp_path: Path, fake_home: Path
 ) -> None:
     """§6: the id is not guessed at — no session dir, no scratch line, and no path escape."""
@@ -282,7 +222,6 @@ def test_a_payload_with_an_unusable_session_id_still_gets_keep_but_no_scratch_li
         repo_root, "project_dirs", {"session_id": "../evil", "cwd": str(root)}, fake_home
     )
     assert result.returncode == 0, result.stderr
-    assert "Session scratch:" not in result.stdout
-    assert (root / SCRATCH / KEEP).is_dir()
-    assert not (root / SCRATCH / SESSIONS).exists()
+    assert result.stdout == ""
+    assert list((root / SCRATCH).iterdir()) == []
     assert not (tmp_path / "evil").exists()

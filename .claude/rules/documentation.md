@@ -4,9 +4,9 @@
 the system; `tasks/` holds one living document per unit of work and closes when the task ships.
 Don't mix the two. Drift is a bug in both. Two of them never enter git: `docs/adr/` and `tasks/`
 are local-only working documents, kept out of git in every project exactly like `claude-memory/`
-and `claude-temp/` — which differs in one way: scratch is swept at session end except
-`claude-temp/keep/`, so nothing durable lives there — while the rest of `docs/` and the READMEs
-are committed with the code.**
+and `claude-temp/` — which differs in one way: scratch is working residue, accumulating until
+the human clears it by hand, so nothing durable lives there — while the rest of `docs/` and the
+READMEs are committed with the code.**
 
 ## `docs/` — the system
 ```

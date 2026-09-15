@@ -61,17 +61,6 @@
           }
         ]
       }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$HOME/.claude/scripts/run_hook.py\" session_cleanup",
-            "timeout": 60
-          }
-        ]
-      }
     ]
   },
   "permissions": {

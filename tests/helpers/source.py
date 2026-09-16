@@ -13,6 +13,9 @@ from typing import Any
 
 import install
 
+#: A surviving owned file used by installer integration tests.
+SAMPLE_OWNED_FILE = "agents/python-developer.md"
+
 #: The file dropped into each owned directory so the directory is not empty.
 STUB_NAME = "stub.md"
 

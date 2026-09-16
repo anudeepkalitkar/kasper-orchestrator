@@ -52,6 +52,7 @@ from datetime import UTC, datetime  # noqa: E402 — datetime.UTC is 3.11+, so i
 #: The paths copied verbatim from the repository's ``.claude/`` — KASPER's own (§3).
 OWNED_PATHS: tuple[str, ...] = (
     "agents",
+    "codex",
     "commands",
     "rules",
     "scripts",

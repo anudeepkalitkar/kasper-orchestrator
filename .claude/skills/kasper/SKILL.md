@@ -22,7 +22,9 @@ code-reviewer are **Codex seats** you run as one Bash call, once per task.
 2. **Delegate with the Agent tool**, one task per call. The brief is the prompt: **what,
    why, and what "done" looks like**, plus the done-check the work must satisfy. Name the
    scope rules that apply (production only, tests only, docs only) — the agent definition
-   carries the discipline, your brief carries the task. **The two verification seats are not
+   carries the discipline, your brief carries the task. **Name the exact files to read and a
+   tool-call budget** (default 25; verification-only 10): an agent that has to go looking
+   pays for the search in re-read context. **The two verification seats are not
    Agent calls:** write their brief to a file under the session scratch dir and run
    `python3 .claude/scripts/codex_seat.py tester|reviewer --brief <brief> --out <report>`,
    then read the report it names.
@@ -58,6 +60,11 @@ code-reviewer are **Codex seats** you run as one Bash call, once per task.
 8. **Watch the human's money.** Every delegation is real tokens, and a long task now lives
    in *your* context. Batch related asks, prefer one well-briefed task over many fragments,
    and say so before anything that will fan out widely.
+9. **Your own turns are the most expensive thing in the session** — every one re-reads your
+   whole accumulated context, ~163K tokens against a subagent's ~90K. So: do task-doc and
+   git bookkeeping in **one** Bash call, never poll a running agent, relay from the digest
+   an agent hands you rather than opening the files behind it, and keep a brief complete
+   enough that the agent never has to come back for a fact you already had.
 
 ## Permission prompts
 

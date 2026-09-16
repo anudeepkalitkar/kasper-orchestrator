@@ -20,14 +20,19 @@ the gate, and report exactly what happened.
 3. Write or adjust tests in the **correct tier**: `tests/unit/` (fast, **no I/O** — no network,
    DB, disk, clock, or real subprocess; use a fake or move the test up a tier),
    `tests/integration/` (real-ish collaborators via fakes), `tests/e2e/` (full stack). Mirror
-   the source path; name files `test_*.py`. A unit test that does I/O is a defect — fix the
-   placement rather than shipping it.
+   the source path; name files `test_*.py` in a Python project, `*.test.ts` / `*.spec.ts` in a
+   Node one. A unit test that does I/O is a defect — fix the placement, do not ship it.
 4. Reuse what exists: fixtures in `conftest.py`, shared fakes/helpers in `tests/helpers/` —
    imported, never copy-pasted. Small, single-purpose tests with descriptive names.
-5. Run the gate **exactly**: `ruff check . && mypy && pytest tests/unit`. Use bare `mypy` when
-   `pyproject.toml` has a `files = [...]` key under `[tool.mypy]` (this repo does — a path
-   argument would override that list); otherwise `mypy .`. Run `pytest tests/integration` (and
-   e2e) as well when the change touches what they cover.
+5. Run the gate **exactly**, picking it by what the project is
+   (`.claude/rules/autonomous-workflow.md` §4):
+   - **Python** (`pyproject.toml` or `setup.cfg` present) —
+     `ruff check . && mypy && pytest tests/unit`. Bare `mypy` when `pyproject.toml` has a
+     `files = [...]` key under `[tool.mypy]` (a path argument would override that list);
+     otherwise `mypy .`.
+   - **Node** (`package.json` present) — `npx eslint . && npx tsc --noEmit && npm test`.
+   Run the heavier tiers (`pytest tests/integration`, e2e) too when the change touches what
+   they cover.
 6. If it is red, find the root cause. **Never** weaken an assertion, `skip`/`xfail` a real
    failure, or delete a test to go green. You do not fix production code: report the defect
    precisely and leave the gate red.

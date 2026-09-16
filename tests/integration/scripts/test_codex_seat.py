@@ -1,5 +1,6 @@
 """Real temporary prompt/report files with subprocess.run replaced by a fake."""
 
+import io
 import subprocess
 from pathlib import Path
 from types import ModuleType
@@ -13,6 +14,7 @@ def test_role_and_brief_files_reach_codex_intact(
     codex_seat: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     seat: str,
 ) -> None:
     """The selected UTF-8 role and brief reach exec, and the report is read from disk."""
@@ -22,6 +24,8 @@ def test_role_and_brief_files_reach_codex_intact(
     brief = tmp_path / "brief.md"
     brief.write_text("Verify this change\n", encoding="utf-8")
     out = tmp_path / "report.md"
+    log = tmp_path / "report.md.log"
+    log.write_text("Previous transcript\n", encoding="utf-8")
     monkeypatch.setattr(codex_seat, "ROLE_PROMPT_DIR", role_dir)
     calls: list[list[str]] = []
 
@@ -31,12 +35,20 @@ def test_role_and_brief_files_reach_codex_intact(
             assert argv[-1] == "Role café\n\n## Brief\nVerify this change\n"
             assert argv[-3:-1] == ["-o", str(out)]
             out.write_text("GATE: green\n", encoding="utf-8")
+            transcript = kwargs["stdout"]
+            assert isinstance(transcript, io.TextIOBase)
+            assert kwargs["stderr"] == subprocess.STDOUT
+            transcript.write("Private transcript café\n")
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(codex_seat.subprocess, "run", run)
     assert codex_seat.main([seat, "--brief", str(brief), "--out", str(out)]) == 0
     assert len(calls) == 2
     assert out.read_text(encoding="utf-8") == "GATE: green\n"
+    assert log.read_text(encoding="utf-8") == "Private transcript café\n"
+    captured = capsys.readouterr()
+    assert captured.out == f"GATE: green\n{out}\n"
+    assert captured.err == ""
 
 
 @pytest.mark.parametrize("session_status", [0, 1])

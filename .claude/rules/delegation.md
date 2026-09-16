@@ -27,6 +27,9 @@ cross-discipline routes back through KASPER.
    ([[autonomous-workflow]]).
 2. Research/unknowns → `researcher` before guessing.
 3. Work inline only when it is small and self-contained enough that delegation is pure overhead.
+4. **Brief completely, then budget.** Every brief carries the facts the agent needs, the exact
+   files to read, and a tool-call budget — context is re-read on every turn, so a fresh,
+   well-briefed agent costs less than a long-lived one that has to go looking.
 
 ## Parallelize independent work (fan out, then integrate)
 - Before any multi-part task ask: which pieces are independent? **Batch those agent calls in a

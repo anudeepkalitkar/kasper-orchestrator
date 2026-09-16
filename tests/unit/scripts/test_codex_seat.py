@@ -1,5 +1,7 @@
 """Seat contracts with in-memory files and a fake subprocess; no runtime I/O."""
 
+import io
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -94,6 +96,71 @@ def test_description_abbreviates_long_prompts(codex_seat: ModuleType) -> None:
     ]
 
 
+@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_non_repository_cwd_is_refused_before_any_work(
+    codex_seat: ModuleType,
+    seat_project: Path,
+    seat_process: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    seat: str,
+    dry_run: bool,
+) -> None:
+    """Missing .git stops even a dry run before prompt reads, cleanup, or subprocesses."""
+    checked_paths: list[Path] = []
+
+    def is_dir(path: Path) -> bool:
+        checked_paths.append(path)
+        return False
+
+    file_access = Mock(side_effect=AssertionError("refused cwd must not access files"))
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    for method in ("read_text", "open", "unlink"):
+        monkeypatch.setattr(Path, method, file_access)
+    argv = [seat, "--brief", "brief.md", "--out", "report.md"]
+    if dry_run:
+        argv.append("--dry-run")
+
+    assert codex_seat.main(argv) == 2
+
+    assert checked_paths == [seat_project / ".git"]
+    seat_process.assert_not_called()
+    file_access.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.out == "report.md\n"
+    assert str(seat_project) in captured.err
+    assert "not a repository" in captured.err
+
+
+@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("project", [Path("/projects/first"), Path("/projects/second")])
+def test_role_prompt_is_read_beside_the_script_regardless_of_cwd(
+    codex_seat: ModuleType,
+    repo_root: Path,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    seat: str,
+    project: Path,
+) -> None:
+    """A different caller project cannot redirect either seat's role prompt."""
+    expected_role = repo_root / ".claude" / "codex" / f"{seat}.md"
+    seat_files.clear()
+    seat_files[expected_role] = "Installation role\n"
+    seat_files[Path("brief.md")] = "Caller brief\n"
+    seat_files[project / ".claude" / "codex" / f"{seat}.md"] = "Wrong caller role\n"
+    monkeypatch.setattr(Path, "cwd", Mock(return_value=project))
+    monkeypatch.setattr(Path, "is_dir", lambda path: path == project / ".git")
+
+    assert codex_seat.main([seat, "--brief", "brief.md", "--out", "report.md", "--dry-run"]) == 0
+
+    assert codex_seat.ROLE_PROMPT_DIR == expected_role.parent
+    assert "Installation role  ## Brief Caller brief" in capsys.readouterr().out
+    seat_process.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("report", "expected"),
     [
@@ -171,6 +238,8 @@ def test_login_failure_exits_three_without_running_a_seat(
     seat_process.assert_called_once_with(
         ["codex", "login", "status"],
         stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         timeout=30,
         check=False,
     )
@@ -184,6 +253,8 @@ def test_exec_timeout_exits_four_and_uses_requested_deadline(
     codex_seat: ModuleType,
     seat_files: dict[Path, str],
     seat_process: Mock,
+    seat_log: Mock,
+    seat_project: Path,
     capsys: pytest.CaptureFixture[str],
     seat: str,
 ) -> None:
@@ -204,14 +275,17 @@ def test_exec_timeout_exits_four_and_uses_requested_deadline(
         == 4
     )
     assert seat_process.call_args.kwargs == {
-        "cwd": codex_seat.REPO_ROOT,
+        "cwd": seat_project,
         "stdin": subprocess.DEVNULL,
+        "stdout": seat_log.return_value,
+        "stderr": subprocess.STDOUT,
         "timeout": 7,
         "check": False,
     }
     captured = capsys.readouterr()
     assert captured.out == "report.md\n"
     assert "exceeded 7s" in captured.err
+    seat_log.return_value.__exit__.assert_called_once()
 
 
 @pytest.mark.parametrize("returncode", [0, 1, 7])
@@ -285,3 +359,98 @@ def test_unreadable_prompt_exits_two_before_login(
     captured = capsys.readouterr()
     assert captured.out == "report.md\n"
     assert "cannot read the seat's prompt" in captured.err
+
+
+@pytest.mark.parametrize(("seat", "limit"), [("tester", 11), ("reviewer", 60)])
+@pytest.mark.parametrize("offset", [-1, 0, 1, 20])
+def test_echo_limits_report_lines_and_prints_output_path_last(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    capsys: pytest.CaptureFixture[str],
+    seat: str,
+    limit: int,
+    offset: int,
+) -> None:
+    """Tester stdout is capped at eleven report lines; reviewers get an overflow pointer."""
+    out = Path("reports/my report.md")
+    lines = ["GATE: green", *(f"Finding {index}" for index in range(limit + offset - 1))]
+    seat_files[out] = "\n".join(lines) + "\n"
+
+    assert codex_seat.main([seat, "--brief", "brief.md", "--out", str(out)]) == 0
+
+    expected = lines[:limit]
+    if seat == "reviewer" and offset > 0:
+        expected.append(f"… full report in {out}")
+    assert capsys.readouterr().out.splitlines() == [*expected, str(out)]
+
+
+@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+def test_transcript_is_opened_beside_report_without_creating_a_disk_file(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    seat_log: Mock,
+    seat_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    seat: str,
+) -> None:
+    """The complete run routes transcript writes to a fake and never opens or unlinks disk."""
+    out = Path("reports/my report.md")
+    seat_files[out] = "GATE: green\n"
+    disk_open = Mock(side_effect=AssertionError("unit test attempted disk open"))
+    disk_unlink = Mock(side_effect=AssertionError("unit test attempted disk unlink"))
+    disk_stat = Mock(side_effect=AssertionError("unit test attempted disk stat"))
+    real_cwd = Mock(side_effect=AssertionError("unit test attempted real cwd lookup"))
+    with monkeypatch.context() as guard:
+        guard.setattr(io, "open", disk_open)
+        guard.setattr(os, "open", disk_open)
+        guard.setattr(os, "unlink", disk_unlink)
+        guard.setattr(os, "stat", disk_stat)
+        guard.setattr(os, "getcwd", real_cwd)
+        guard.setattr("builtins.open", disk_open)
+        assert codex_seat.main([seat, "--brief", "brief.md", "--out", str(out)]) == 0
+
+    disk_open.assert_not_called()
+    disk_unlink.assert_not_called()
+    disk_stat.assert_not_called()
+    real_cwd.assert_not_called()
+    seat_log.assert_called_once_with(Path("reports/my report.md.log"), "w", encoding="utf-8")
+    assert seat_process.call_count == 2
+    assert seat_process.call_args_list[0].args == (["codex", "login", "status"],)
+    assert seat_process.call_args_list[0].kwargs == {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "timeout": 30,
+        "check": False,
+    }
+    assert seat_process.call_args.kwargs == {
+        "cwd": seat_project,
+        "stdin": subprocess.DEVNULL,
+        "stdout": seat_log.return_value,
+        "stderr": subprocess.STDOUT,
+        "timeout": 1800,
+        "check": False,
+    }
+    seat_log.return_value.__exit__.assert_called_once_with(None, None, None)
+    assert capsys.readouterr().out.splitlines() == ["GATE: green", str(out)]
+
+
+def test_unwritable_transcript_stops_before_exec(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    seat_log: Mock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Failure to open the transcript is an input error with the report path last."""
+    seat_log.side_effect = PermissionError("read-only destination")
+    assert codex_seat.main(["tester", "--brief", "brief.md", "--out", "report.md"]) == 2
+    assert seat_process.call_count == 1
+    assert seat_process.call_args.args == (["codex", "login", "status"],)
+    captured = capsys.readouterr()
+    assert captured.out == "report.md\n"
+    assert "cannot prepare report.md" in captured.err
+    assert "read-only destination" in captured.err

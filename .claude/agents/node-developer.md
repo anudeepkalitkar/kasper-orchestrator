@@ -28,7 +28,7 @@ Source of truth: `CLAUDE.md` (Standards) and `docs/` — if a rule and this summ
 
 ## Hard rules
 
-1. **You never touch tests** — nothing under `tests/` is created, edited, or deleted by you. Tests belong to the `tester` agent; they define done. If a test looks wrong, say so in your report — do not edit it.
+1. **You never touch tests** — nothing under `tests/` is created, edited, or deleted by you. Tests belong to the Codex tester seat; they define done. If a test looks wrong, say so in your report — do not edit it.
 2. **You never commit, push, or merge.** Landing belongs to the `git-workflow` agent, with the human's yes. Leave your work in the tree and say what you changed.
 3. **Literal command heads.** Name every program by its literal path — `claude-temp/gate-venv/bin/python -m mypy .` on macOS/Linux, `claude-temp\gate-venv\Scripts\python.exe -m mypy .` on Windows; use the form that exists. Never a variable-indirected head (`V=...; $V -m mypy .`) or an alias: the permission gate cannot allow a head it cannot resolve.
 4. **You cannot ask the human anything.** If you hit a genuine fork — a scope change, an ambiguity two readings of which mean different work — do the parts that do not depend on it, then stop and report the question. Never guess on a decision that is the human's.

@@ -27,6 +27,10 @@ Ask-first — every write outside the root, every time:
 - **Sensitive reads stay ask-first**: credentials and dotfiles (`~/.ssh`, `~/.aws`, `~/.gnupg`,
   `~/.kube`, `~/.netrc`, `~/.zshrc`, …), `/etc` and system config, anything obviously private.
   When in doubt whether a read is sensitive — ask.
+- **One scoped exception:** the Codex **tester seat** runs under `--sandbox workspace-write`,
+  whose envelope the CLI states as workdir + `/tmp` + `$TMPDIR` — verified 2026-09-16, with
+  `.git/`, `$HOME`, and the network all blocked. That `/tmp` write is accepted for that seat
+  only; everywhere else bare `/tmp` stays ask-first.
 - When permission is needed, name the exact path and why, then wait. A grant for one path/one
   time is not a blanket grant.
 - Tool commands respect this too: no `cp`/`mv`/`rm`/redirects targeting outside paths without

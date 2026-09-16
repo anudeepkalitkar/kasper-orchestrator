@@ -43,11 +43,12 @@ around a prompt.
    append-only ADRs in `docs/adr/` and living task docs in `tasks/` are local-only, kept out
    of git, never committed; drift is a defect.
 
-## KASPER — one session, seven agents
+## KASPER — one session, five agents and two Codex seats
 
 `/kasper` ([skills/kasper/SKILL.md](.claude/skills/kasper/SKILL.md)) turns the session it
-is typed in into the project's KASPER. It raises nothing: the disciplines are **subagents
-of that session**, spawned per task with the Agent tool. Chain law: human → KASPER →
+is typed in into the project's KASPER. It raises nothing: the five Claude disciplines are
+**subagents of that session**, spawned per task with the Agent tool; the two verification
+seats are Bash calls into the OpenAI Codex CLI, not agents. Chain law: human → KASPER →
 agents, one hop. Agents cannot spawn agents, cannot message each other, and cannot ask the
 human anything — an agent that hits a fork stops and reports it; KASPER asks and resumes
 that same agent with the answer. Permission prompts, an agent's included, surface natively
@@ -55,18 +56,27 @@ in KASPER's session and the human answers them there.
 
 The roster ([agents/](.claude/agents/)) — [python-developer](.claude/agents/python-developer.md) ·
 [node-developer](.claude/agents/node-developer.md) (implement; never touch `tests/`; never
-commit) · [tester](.claude/agents/tester.md) (writes the tests first, verifies
-independently) · [documentor](.claude/agents/documentor.md) (owns the written truth; docs
+commit) · [documentor](.claude/agents/documentor.md) (owns the written truth; docs
 only) · [git-workflow](.claude/agents/git-workflow.md) (the only committer; merges
 human-approved always; structurally `Write`/`Edit`-less) ·
-[code-reviewer](.claude/agents/code-reviewer.md) (judges a diff, never edits) ·
 [researcher](.claude/agents/researcher.md) (external facts, reads only).
+
+Verification is not a subagent. The **tester** and **code-reviewer** are seats on the OpenAI
+Codex CLI, run headless by one ledger-gated Bash call —
+`python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file> --out <file>`
+([codex_seat.py](.claude/scripts/codex_seat.py)) — whose prompt is the seat's role file in
+[codex/](.claude/codex/) plus the brief KASPER wrote. **One verify pass per task, not per
+subtask:** the developer implements the task, the tester seat authors the tests and runs the
+gate, the reviewer seat judges the diff. The tester's report opens `GATE: green` or
+`GATE: red`; the script exits 0 green · 1 red · 2 bad arguments · 3 Codex not signed in (the
+human runs `codex login`) · 4 timeout · 5 no verdict. Owner ≠ verifier now also means
+vendor ≠ vendor.
 
 ## Skills ([skills/](.claude/skills/))
 
 [kasper](.claude/skills/kasper/SKILL.md) — become the project's KASPER.
 [webapp-testing](.claude/skills/webapp-testing/SKILL.md) — Playwright tooling for testing
-local web apps (the tester's tool).
+local web apps.
 
 ## Commands ([commands/](.claude/commands/))
 
@@ -99,14 +109,17 @@ Every hook command runs through one dispatcher —
   event — macOS Glass/Funk, the Windows and freedesktop equivalents — with the bundled
   `notify.wav` as the fallback).
 - Command helpers: [git_checkpoint.py](.claude/scripts/git_checkpoint.py) (backs
-  `/checkpoint`) · [new_task.py](.claude/scripts/new_task.py) (backs `/new-task`).
+  `/checkpoint`) · [new_task.py](.claude/scripts/new_task.py) (backs `/new-task`). Beside them,
+  [codex_seat.py](.claude/scripts/codex_seat.py) runs a Codex verification seat — KASPER calls it
+  directly; it is not a hook.
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
   shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
   never those.
 
 ## Where things are
 
-What this repo holds: the config under [.claude/](.claude/), this file,
+What this repo holds: the config under [.claude/](.claude/) — including the Codex seat
+prompts in [.claude/codex/](.claude/codex/), the eighth path `install.py` owns — this file,
 [README.md](README.md), and the installer [install.py](install.py) with its `tests/` and
 `pyproject.toml`. The decision record in `docs/adr/` and the task records in `tasks/` are local
 working files — never committed, so a clone carries neither. (This repo also lists all four

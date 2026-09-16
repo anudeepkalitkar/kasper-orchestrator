@@ -10,17 +10,20 @@ cross-discipline routes back through KASPER.
 - **python-developer** — write/refactor/debug Python to the code standards; never touches
   `tests/`, never commits.
 - **node-developer** — the TS/JS counterpart (server and client); same scope limits.
-- **tester** — authors tier-correct tests and proves changes work; the default **verifier**.
+- **tester seat (Codex)** · **code-reviewer seat (Codex)** — not subagents. KASPER runs
+  `python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file> --out <file>` once per
+  task, with the seats' role prompts in `.claude/codex/`: the tester authors tier-correct tests
+  and runs the gate, the reviewer judges the diff with ranked findings and edits nothing.
 - **documentor** — owns the written truth (`docs/`, README, and the local-only `tasks/` docs);
   docs only, never production code or tests.
-- **git-workflow** — the only agent that commits, pushes, or merges; re-runs the gate itself
-  before committing, and merges wait on the human's explicit yes.
-- **code-reviewer** — reviews a diff/branch against the rules; ranked findings, doesn't edit.
+- **git-workflow** — the only agent that commits, pushes, or merges; checkpoints on the Codex
+  tester seat's recorded green, and merges wait on the human's explicit yes.
 - **researcher** — internet research → precise, cited summary; use whenever a question needs
   up-to-date or external information rather than guessing.
 
 ## How to route
-1. Owner implements, a **different** agent verifies — the writer never grades its own work
+1. Owner implements; verification is a different **vendor's** seat — one Codex tester pass per
+   task, then one reviewer pass. The writer never grades its own work
    ([[autonomous-workflow]]).
 2. Research/unknowns → `researcher` before guessing.
 3. Work inline only when it is small and self-contained enough that delegation is pure overhead.

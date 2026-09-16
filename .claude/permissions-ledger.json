@@ -217,6 +217,37 @@
       "note": "fork bomb"
     }
   ],
-  "grants": [],
+  "grants": [
+    {
+      "key": "readlink",
+      "note": "auto-recorded: user approved this command",
+      "example": "ls -ld claude-memory; readlink claude-memory; ls -la claude-memory | head -20",
+      "added": "2026-09-12"
+    },
+    {
+      "key": "ln",
+      "note": "auto-recorded: user approved this command",
+      "example": "cd /Users/anudeepkalitkar/Desktop/Projects/KasperOS/kasper-orchestrator/claude-temp/sessions/kasper-004/smoke1/proj && mkdir -p claude-temp && git worktree add ",
+      "added": "2026-09-13"
+    },
+    {
+      "key": "gitleaks",
+      "note": "auto-recorded: user approved this command",
+      "example": "gitleaks --version && gitleaks protect --staged --no-banner 2>&1 | tail -15 ; echo \"GITLEAKS_EXIT=$?\"",
+      "added": "2026-09-13"
+    },
+    {
+      "key": "brew",
+      "note": "auto-recorded: user approved this command",
+      "example": "command -v codex || echo \"NOT FOUND\"; echo \"---\"; command -v npm && npm --version; echo \"---\"; command -v brew && brew --version | head -1",
+      "added": "2026-09-16"
+    },
+    {
+      "key": "codex",
+      "note": "auto-recorded: user approved this command",
+      "example": "command -v codex; codex --version 2>&1",
+      "added": "2026-09-16"
+    }
+  ],
   "denials": []
 }

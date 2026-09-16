@@ -3,13 +3,15 @@
 **K**alitkar **A**utonomous **S**ystem for **P**rogramming, **E**ngineering & **R**easoning.
 
 One Claude Code session that runs your project: you talk to it, it delegates the real work
-to discipline **subagents** — developer, tester, documentor, git-workflow, code-reviewer,
-researcher — and keeps the task doc while they work. Claude Code is the mechanism; KASPER
-is a skill, a set of agent definitions, standing rules, and a few hook scripts.
+to discipline **subagents** — developer, documentor, git-workflow, researcher — and, once per
+task, to two verification seats that run on the OpenAI Codex CLI — tester and code-reviewer —
+and keeps the task doc while they work. Claude Code is the mechanism; KASPER is a skill, a set
+of agent definitions, standing rules, and a few hook scripts.
 
 What KASPER *is* lives under `.claude/`: the `/kasper` skill in `.claude/skills/kasper/`,
 the agent definitions in `.claude/agents/` (one file per discipline — edit one and the
-next delegation uses it; its frontmatter pins that agent's model and tools), the standing
+next delegation uses it; its frontmatter pins that agent's model and tools), the Codex seat
+prompts in `.claude/codex/`, the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and
 the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). That, the
 installer (`install.py`) with its `tests/` and `pyproject.toml`, this README and `CLAUDE.md`
@@ -26,8 +28,8 @@ git clone <repo> && cd kasper-orchestrator
 python3 install.py                  # Windows: python install.py
 ```
 
-The installer copies KASPER's own files — `agents/`, `commands/`, `rules/`, `scripts/`,
-`skills/`, `sounds/`, `CLAUDE.md` — out of `.claude/` into your Claude home, `~/.claude/`,
+The installer copies KASPER's own files — `agents/`, `codex/`, `commands/`, `rules/`,
+`scripts/`, `skills/`, `sounds/`, `CLAUDE.md` — out of `.claude/` into your Claude home, `~/.claude/`,
 and **merges** `settings.json` and `permissions-ledger.json` into whatever is already
 there, so your own keys (the model pin, the theme, your own hooks) and your own allow keys,
 denials and machine-specific grants survive untouched. Anything it would overwrite is
@@ -58,7 +60,9 @@ the dispatcher prefers a project's own `.claude/scripts/<name>.py` and falls bac
 home copy — but a project copy alone, with nothing installed at home, runs no hooks at all.
 
 It needs nothing but **Python 3.12+** and a logged-in `claude` — on an older interpreter
-`install.py` says so and exits 1. On Windows, Git Bash must be installed: Claude Code runs
+`install.py` says so and exits 1. The verification seats additionally need the OpenAI Codex
+CLI (`npm install -g @openai/codex`, then `codex login`); without it the seat stops with exit
+code 3 and tells you to sign in. On Windows, Git Bash must be installed: Claude Code runs
 the hook commands through it.
 
 Then, in any project:
@@ -73,8 +77,8 @@ digest, with the full evidence written under the session's own scratch dir —
 `claude-temp/sessions/<session-id>/`, created by the SessionStart hook and named in the
 session's context, reports landing in its `reports/`. Permission prompts — including
 ones raised inside an agent — surface right there for you to answer; the ledger decides
-what never needs asking. The agent that writes code is never the one that verifies it,
-only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
+what never needs asking. The one that writes code is never the one that verifies it —
+verification is a single pass per task, run on Codex — only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
 KASPER to end when you're done: it writes the session's memory and stops. Nothing is
 cleaned up for you — `claude-temp/` accumulates across sessions, and clearing it is
 yours to do whenever you like.

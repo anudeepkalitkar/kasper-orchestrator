@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
+
+from tests.helpers.hooks import load_script
 
 #: The repository root: ``tests/`` sits directly beneath it, and its ``.claude/`` is the
 #: install source.
@@ -133,3 +136,9 @@ def home_ledger() -> dict[str, Any]:
         "grants": [{"command": "npm test", "note": "approved 2026-09-01"}],
         "denials": [{"pattern": r"\bcurl\b", "note": "no outbound writes"}],
     }
+
+
+@pytest.fixture
+def codex_seat(repo_root: Path) -> ModuleType:
+    """Load the seat runner using the shared script import helper."""
+    return load_script(repo_root, "codex_seat")

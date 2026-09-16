@@ -66,6 +66,7 @@ makes the doc resumable by any fresh session):
 - **Branch:** <feature branch or n/a>
 - **PR:** <link or n/a>
 - **Created:** <YYYY-MM-DD>
+- **Verify pass:** Codex tester seat, then Codex reviewer seat — once, at task end
 
 ## Goal
 <what done looks like>
@@ -75,7 +76,7 @@ makes the doc resumable by any fresh session):
       goal:       <observable outcome a verifier can judge>
       done-check: `<runnable command, e.g. ruff check . && mypy . && pytest tests/unit -k upload>`
       cap:        5
-      owner:      <agent>   verifier: <different agent>
+      owner:      <agent>
 - [ ] 2. ...
 
 ## Decisions & Notes

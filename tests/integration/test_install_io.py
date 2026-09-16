@@ -21,7 +21,7 @@ import install
 from tests.helpers.cli import line_with, parse_kinds, run_cli
 from tests.helpers.files import read_json
 from tests.helpers.settings import hook_commands
-from tests.helpers.source import make_source
+from tests.helpers.source import SAMPLE_OWNED_FILE, make_source
 from tests.helpers.symlinks import symlink_or_skip
 
 
@@ -74,7 +74,9 @@ def test_owned_files_reads_every_owned_path_with_posix_keys(repo_root: Path) -> 
     """§3: the owned tree keyed by POSIX relative path, ``__pycache__`` excluded."""
     files = install.owned_files(repo_root / ".claude")
     assert "CLAUDE.md" in files
-    assert "agents/tester.md" in files
+    assert SAMPLE_OWNED_FILE in files
+    assert "codex/tester.md" in files
+    assert "codex/reviewer.md" in files
     assert "skills/kasper/SKILL.md" in files
     assert not any("__pycache__" in key for key in files)
     assert not any("\\" in key for key in files)
@@ -83,7 +85,7 @@ def test_owned_files_reads_every_owned_path_with_posix_keys(repo_root: Path) -> 
 def test_owned_files_returns_the_bytes_on_disk(repo_root: Path) -> None:
     """The copy is verbatim, binary included."""
     files = install.owned_files(repo_root / ".claude")
-    assert files["agents/tester.md"] == (repo_root / ".claude/agents/tester.md").read_bytes()
+    assert files[SAMPLE_OWNED_FILE] == (repo_root / ".claude" / SAMPLE_OWNED_FILE).read_bytes()
     assert files["sounds/notify.wav"] == (repo_root / ".claude/sounds/notify.wav").read_bytes()
 
 
@@ -246,12 +248,12 @@ def test_modified_owned_file_is_backed_up_then_overwritten(
 ) -> None:
     """§6: the old bytes go to the timestamped backup, the new bytes go home."""
     _run_install(repo_root, home, now=fixed_now)
-    target = home / "agents/tester.md"
+    target = home / SAMPLE_OWNED_FILE
     target.write_bytes(b"local edit")
     _, out = _run_install(repo_root, home, now=fixed_now)
-    assert (home / backup_name / "agents/tester.md").read_bytes() == b"local edit"
-    assert target.read_bytes() == (repo_root / ".claude/agents/tester.md").read_bytes()
-    assert parse_kinds(out)["agents/tester.md"] == "overwrite"
+    assert (home / backup_name / SAMPLE_OWNED_FILE).read_bytes() == b"local edit"
+    assert target.read_bytes() == (repo_root / ".claude" / SAMPLE_OWNED_FILE).read_bytes()
+    assert parse_kinds(out)[SAMPLE_OWNED_FILE] == "overwrite"
 
 
 # ---------------------------------------------------------------- dry run
@@ -278,9 +280,9 @@ def test_dry_run_over_an_installed_home_changes_nothing(
     repo_root: Path, installed_home: Path
 ) -> None:
     """A dry run never repairs — or backs up — a home it finds drifted."""
-    (installed_home / "agents/tester.md").write_bytes(b"local edit")
+    (installed_home / SAMPLE_OWNED_FILE).write_bytes(b"local edit")
     install.install(repo_root, installed_home, "python3", dry_run=True, out=io.StringIO())
-    assert (installed_home / "agents/tester.md").read_bytes() == b"local edit"
+    assert (installed_home / SAMPLE_OWNED_FILE).read_bytes() == b"local edit"
     assert list(installed_home.glob("kasper-backup-*")) == []
 
 
@@ -298,23 +300,23 @@ def test_status_reports_ok_for_every_recorded_file(installed_home: Path) -> None
     out = io.StringIO()
     install.status(installed_home, out=out)
     kinds = parse_kinds(out.getvalue())
-    assert kinds["agents/tester.md"] == "ok"
+    assert kinds[SAMPLE_OWNED_FILE] == "ok"
 
 
 def test_status_names_a_modified_file_and_exits_one(installed_home: Path) -> None:
     """§9: any drift exits 1 and says which file drifted."""
-    (installed_home / "agents/tester.md").write_bytes(b"local edit")
+    (installed_home / SAMPLE_OWNED_FILE).write_bytes(b"local edit")
     out = io.StringIO()
     assert install.status(installed_home, out=out) == 1
-    assert line_with(out.getvalue(), "agents/tester.md", "modified") is not None
+    assert line_with(out.getvalue(), SAMPLE_OWNED_FILE, "modified") is not None
 
 
 def test_status_names_a_missing_file_and_exits_one(installed_home: Path) -> None:
     """A deleted owned file is drift too."""
-    (installed_home / "agents/tester.md").unlink()
+    (installed_home / SAMPLE_OWNED_FILE).unlink()
     out = io.StringIO()
     assert install.status(installed_home, out=out) == 1
-    assert line_with(out.getvalue(), "agents/tester.md", "missing") is not None
+    assert line_with(out.getvalue(), SAMPLE_OWNED_FILE, "missing") is not None
 
 
 def test_status_reports_the_kasper_hooks_are_present(installed_home: Path) -> None:
@@ -401,12 +403,12 @@ def test_uninstall_keeps_a_modified_file_and_exits_one(
     installed_home: Path, fixed_now: datetime
 ) -> None:
     """§10: anything modified is kept and reported, and the run exits 1."""
-    target = installed_home / "agents/tester.md"
+    target = installed_home / SAMPLE_OWNED_FILE
     target.write_bytes(b"local edit")
     out = io.StringIO()
     assert install.uninstall(installed_home, now=fixed_now, out=out) == 1
     assert target.read_bytes() == b"local edit"
-    assert line_with(out.getvalue(), "agents/tester.md", "keep") is not None
+    assert line_with(out.getvalue(), SAMPLE_OWNED_FILE, "keep") is not None
 
 
 # ---------------------------------------------------------------- main
@@ -416,7 +418,7 @@ def test_main_installs_into_the_home_it_is_given(home: Path) -> None:
     """The CLI end to end: ``--home`` targets any directory (§2)."""
     assert run_cli(install.main, ["--home", str(home)]) == 0
     assert (home / install.MANIFEST_NAME).is_file()
-    assert (home / "agents/tester.md").is_file()
+    assert (home / SAMPLE_OWNED_FILE).is_file()
 
 
 def test_main_renders_the_interpreter_it_is_given(home: Path) -> None:
@@ -436,7 +438,7 @@ def test_main_status_follows_the_install(home: Path) -> None:
     """``--status`` is 0 on a clean home and 1 once a file drifts."""
     run_cli(install.main, ["--home", str(home)])
     assert run_cli(install.main, ["--home", str(home), "--status"]) == 0
-    (home / "agents/tester.md").write_bytes(b"local edit")
+    (home / SAMPLE_OWNED_FILE).write_bytes(b"local edit")
     assert run_cli(install.main, ["--home", str(home), "--status"]) == 1
 
 
@@ -535,7 +537,7 @@ def test_uninstall_refuses_a_corrupt_settings_file_and_removes_nothing(
     with pytest.raises(ValueError, match="not valid JSON"):
         install.uninstall(installed_home, out=io.StringIO())
     assert (installed_home / install.MANIFEST_NAME).is_file()
-    assert (installed_home / "agents/tester.md").is_file()
+    assert (installed_home / SAMPLE_OWNED_FILE).is_file()
 
 
 # ---------------------------------------------------------------- absent pieces
@@ -713,7 +715,7 @@ def test_uninstall_refuses_a_manifest_key_outside_the_home_and_deletes_nothing(
         install.uninstall(installed_home, out=io.StringIO())
     assert victim.read_text(encoding="utf-8") == "not yours\n"
     assert (installed_home / install.MANIFEST_NAME).is_file()
-    assert (installed_home / "agents/tester.md").is_file()
+    assert (installed_home / SAMPLE_OWNED_FILE).is_file()
 
 
 # ---------------------------------------------------------------- malformed shapes
@@ -776,7 +778,7 @@ def test_install_refuses_a_malformed_ledger_and_writes_nothing(
 def test_status_refuses_a_manifest_hash_that_is_not_a_string(installed_home: Path) -> None:
     """A ``files`` map is path -> hex digest; anything else is not a KASPER manifest."""
     manifest = read_json(installed_home / install.MANIFEST_NAME)
-    manifest["files"]["agents/tester.md"] = 7
+    manifest["files"][SAMPLE_OWNED_FILE] = 7
     (installed_home / install.MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="must be a string"):
         install.status(installed_home, out=io.StringIO())
@@ -867,21 +869,21 @@ def test_two_backups_in_the_same_second_do_not_overwrite_each_other(
     repo_root: Path, installed_home: Path, fixed_now: datetime, backup_name: str
 ) -> None:
     """§6: a second run in the same second gets its own directory, so nothing is lost."""
-    target = installed_home / "agents/tester.md"
+    target = installed_home / SAMPLE_OWNED_FILE
     target.write_bytes(b"edit one")
     _run_install(repo_root, installed_home, now=fixed_now)
     target.write_bytes(b"edit two")
     _run_install(repo_root, installed_home, now=fixed_now)
-    assert (installed_home / backup_name / "agents/tester.md").read_bytes() == b"edit one"
-    assert (installed_home / f"{backup_name}-2" / "agents/tester.md").read_bytes() == b"edit two"
+    assert (installed_home / backup_name / SAMPLE_OWNED_FILE).read_bytes() == b"edit one"
+    assert (installed_home / f"{backup_name}-2" / SAMPLE_OWNED_FILE).read_bytes() == b"edit two"
 
 
 def test_dry_run_names_every_file_it_would_back_up(repo_root: Path, installed_home: Path) -> None:
     """§8's plan is "overwrite *with backup*" — the dry run says which files that means."""
-    (installed_home / "agents/tester.md").write_bytes(b"local edit")
+    (installed_home / SAMPLE_OWNED_FILE).write_bytes(b"local edit")
     out = io.StringIO()
     install.install(repo_root, installed_home, "python", dry_run=True, out=out)
-    assert line_with(out.getvalue(), "backup", "agents/tester.md") is not None
+    assert line_with(out.getvalue(), "backup", SAMPLE_OWNED_FILE) is not None
     assert line_with(out.getvalue(), "backup", install.SETTINGS_NAME) is not None
     assert list(installed_home.glob("kasper-backup-*")) == []
 
@@ -1029,13 +1031,13 @@ def test_install_over_an_unreadable_manifest_repairs_the_home(
     repo_root: Path, installed_home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An install is the repair path: a truncated manifest costs the prune, not the run."""
-    (installed_home / "agents/tester.md").write_bytes(b"local edit")
+    (installed_home / SAMPLE_OWNED_FILE).write_bytes(b"local edit")
     (installed_home / install.MANIFEST_NAME).write_text("{ not json", encoding="utf-8")
     code, _ = _run_install(repo_root, installed_home)
     assert code == 0
     assert "ignoring an unreadable manifest" in capsys.readouterr().err
-    assert (installed_home / "agents/tester.md").read_bytes() == (
-        repo_root / ".claude/agents/tester.md"
+    assert (installed_home / SAMPLE_OWNED_FILE).read_bytes() == (
+        repo_root / ".claude" / SAMPLE_OWNED_FILE
     ).read_bytes()
     assert install.status(installed_home, out=io.StringIO()) == 0
 
@@ -1068,7 +1070,7 @@ def test_uninstall_still_refuses_an_unreadable_manifest(installed_home: Path) ->
     (installed_home / install.MANIFEST_NAME).write_text("{ not json", encoding="utf-8")
     with pytest.raises(ValueError, match="not valid JSON"):
         install.uninstall(installed_home, out=io.StringIO())
-    assert (installed_home / "agents/tester.md").is_file()
+    assert (installed_home / SAMPLE_OWNED_FILE).is_file()
 
 
 # ---------------------------------------------------------------- symlinked owned directories

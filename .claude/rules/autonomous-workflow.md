@@ -28,13 +28,19 @@ mapping to **one git checkpoint** ([[git-workflow]]). Track them in the task doc
 - **done-check:** a runnable, deterministic command — exit code decides, never "looks good".
   If no runnable check is possible, the subtask is interactive-only — never invent a fuzzy check.
 - **cap:** hard iteration limit, default **5**
-- **owner / verifier:** who implements and who verifies — **different agents, always**; the
-  writer never grades its own work ([[delegation]]).
+- **owner:** who implements it and runs that done-check as they go.
+
+**Verification is once per task, not per subtask:** the developer implements the whole task,
+then one Codex **tester** seat authors the tests and runs the gate, then one Codex **reviewer**
+seat judges the diff — `python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file>
+--out <file>`. The writer still never grades its own work; owner ≠ verifier now also means
+vendor ≠ vendor ([[delegation]]).
 
 ## 4 · The gate — the baseline done-check
 Run the project's tests **directly** — no Makefile, no CI. **Python:**
 `ruff check . && mypy . && pytest tests/unit` · **Node:**
-`npx eslint . && npx tsc --noEmit && npm test`. Heavier tiers (`tests/integration/`, e2e) run
+`npx eslint . && npx tsc --noEmit && npm test`. The Codex tester seat runs this gate at task
+end; a subtask owner runs it for their own done-check as they go. Heavier tiers (`tests/integration/`, e2e) run
 before merging changes that touch what they cover ([[test-structure]]). A repo whose
 `pyproject.toml` names the files to check runs **bare `mypy`** instead of `mypy .` — a path
 argument overrides that `files` list, and mypy's crawl skips dot-directories.
@@ -48,8 +54,9 @@ argument overrides that `files` list, and mypy's crawl skips dot-directories.
 4. **Faithful state:** tick a box only when its done-check actually ran green.
 
 ## 6 · Verify before done
-Never call work done without proving it: run the checks that apply AND confirm the *behavior*
-is right — "it ran without error" ≠ "it's correct". Root-cause failures — never paper over a
+Never call work done without proving it: the proof is the tester seat's report — its
+`GATE: green` first line, not a summary of it — plus confirmation that the *behavior* is right;
+"it ran without error" ≠ "it's correct". Root-cause failures — never paper over a
 red result. Report outcomes faithfully: failing tests reported with output, skipped steps named
 plainly, "done and verified" only when true. The bar: what would convince a skeptical staff
 engineer?

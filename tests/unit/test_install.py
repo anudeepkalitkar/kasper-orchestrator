@@ -17,10 +17,11 @@ _KASPER_COMMAND = 'python3 "$HOME/.claude/scripts/run_hook.py" notify'
 # ---------------------------------------------------------------- constants
 
 
-def test_owned_paths_are_the_adr_seven() -> None:
-    """ADR-0006 §3 names exactly these seven owned paths."""
+def test_owned_paths_include_the_eight_paths_with_codex_seats() -> None:
+    """The seven original owned paths plus Codex seat prompts must ship."""
     assert install.OWNED_PATHS == (
         "agents",
+        "codex",
         "commands",
         "rules",
         "scripts",

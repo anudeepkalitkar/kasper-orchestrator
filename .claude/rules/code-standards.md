@@ -79,5 +79,5 @@ ladder — no single-impl ABCs, no unrequested abstraction, no file-per-concern 
 autoformat hook formats Python but does **not** add types or structure — that responsibility is
 yours.
 
-Related: enforced per-PR by the `code-reviewer` agent; complements [[autonomous-workflow]]
+Related: enforced once per task by the Codex code-reviewer seat; complements [[autonomous-workflow]]
 (plan → verify) and [[test-structure]] (small focused tests, not elaborate frameworks).

@@ -13,6 +13,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from tests.helpers.hooks import run_script
+
 #: A ledger the recorder can read, whose prose carries the em dashes the real one uses.
 NOTE = "recorded by hand — never by a hook"
 
@@ -69,3 +73,41 @@ def test_recorder_writes_non_ascii_prose_literally(repo_root: Path, tmp_path: Pa
     assert [grant["key"] for grant in json.loads(raw)["grants"]] == ["git status"]
     assert NOTE in raw
     assert "\\u2014" not in raw
+
+
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [
+        ("od -c", "od -c"),
+        ("od \t  -c", "od -c"),
+        ("od -c " + "x" * 153, "od -c " + "x" * 153),
+        ("od -c " + "x" * 154, "od -c " + "x" * 154),
+        ("od -c " + "x" * 155, "od -c " + "x" * 154),
+        ("od \t -c " + "x" * 220, "od -c " + "x" * 154),
+    ],
+    ids=["pipeline", "whitespace", "159-chars", "160-chars", "161-chars", "normalize-then-cap"],
+)
+def test_recorded_example_describes_promoted_pipeline_part(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    part: str,
+    expected: str,
+) -> None:
+    """Persist the normalized promoted part, preserving up to exactly 160 characters."""
+    project = _project_with_ledger(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    completed = run_script(
+        repo_root,
+        "permission_recorder",
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"cat f | {part} | tail -3"},
+            "permission_mode": "default",
+        },
+        project,
+    )
+    assert completed.returncode == 0, completed.stderr
+    ledger = json.loads((project / ".claude/permissions-ledger.json").read_text(encoding="utf-8"))
+    examples = [grant["example"] for grant in ledger["grants"] if grant["key"] == "od"]
+    assert examples == [expected]

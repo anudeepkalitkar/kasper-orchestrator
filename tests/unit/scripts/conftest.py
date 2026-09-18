@@ -1,11 +1,51 @@
 """In-memory collaborators for the seat runner's unit tests."""
 
+import sys
+from datetime import date
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, mock_open
 
 import pytest
+
+from tests.helpers.hooks import load_script
+
+
+@pytest.fixture
+def permission_gate(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Import the gate with its configuration filesystem probes replaced by fakes."""
+    monkeypatch.setattr(Path, "is_file", lambda path: False)
+    monkeypatch.setattr(Path, "home", lambda: Path("/fake-home"))
+    return load_script(repo_root, "bash_permission_gate")
+
+
+@pytest.fixture
+def permission_recorder(
+    repo_root: Path, permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> ModuleType:
+    """Import the recorder using the fake-config gate and restore its import-path mutation."""
+    monkeypatch.setitem(sys.modules, "bash_permission_gate", permission_gate)
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    return load_script(repo_root, "permission_recorder")
+
+
+@pytest.fixture
+def recorder_effects(permission_recorder: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """Keep recorder ledger, executable lookup, date, and persistence entirely in memory."""
+    effects = Mock(ledger={"grants": [{"key": "echo"}]}, write=Mock(), replace=Mock())
+    monkeypatch.setattr(permission_recorder, "load_ledger", lambda: effects.ledger)
+    monkeypatch.setattr(permission_recorder, "LEDGER_PATH", Path("/fake/ledger.json"))
+    monkeypatch.setattr(Path, "write_text", effects.write)
+    monkeypatch.setattr(permission_recorder.os, "replace", effects.replace)
+    monkeypatch.setattr(permission_recorder.shutil, "which", lambda head: f"/fake/bin/{head}")
+    monkeypatch.setattr(permission_recorder.os, "access", Mock(return_value=False))
+    monkeypatch.setattr(
+        permission_recorder,
+        "datetime",
+        SimpleNamespace(date=Mock(today=Mock(return_value=date(2026, 9, 18)))),
+    )
+    return effects
 
 
 @pytest.fixture

@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from bash_permission_gate import (  # noqa: E402
     _BUILTINS,
     _ENV_ASSIGN,
+    _OPAQUE_SUBSTITUTION,
     _WRAPPERS,
     LEDGER_PATH,
     _strip_tokens,
@@ -171,6 +172,10 @@ def main() -> None:
     pending = unallowed_parts(command, ledger)
     if not pending:
         return  # was auto-allowed — nothing was granted, nothing to learn
+    if _OPAQUE_SUBSTITUTION in pending:
+        # The gate could not read this substitution's body, so the text it took for the
+        # remainder is a guess: none of these parts is trustworthy enough to become policy.
+        return
 
     existing = set(ledger_allow_keys(ledger))
     grants: list[dict[str, Any]] = ledger.setdefault("grants", [])
@@ -184,7 +189,10 @@ def main() -> None:
             {
                 "key": key,
                 "note": "auto-recorded: user approved this command",
-                "example": command.splitlines()[0][:160],
+                # The promoted PART, not the command's first line: a grant read from a pipeline
+                # tail (``... | od -c | tail -3``) was once misread as parser junk because the
+                # truncated first line never showed the command the key came from.
+                "example": " ".join(part.split())[:160],
                 "added": today,
             }
         )

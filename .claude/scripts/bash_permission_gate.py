@@ -13,6 +13,9 @@ patterns, recorded user grants and denials, each with a note). Decision:
     subshell parens, ``$(...)``/backtick substitutions (recursively), env-var prefixes
     (``PATH=... cmd``), path heads (``.venv/bin/pytest`` -> ``pytest``) and wrapper commands
     (``xargs``/``timeout``/``env``/...) — every real command inside must match the ledger.
+    A substitution body this gate cannot delimit simply (quotes, escapes, comments, nesting,
+    or no closer at all) is not classified at all: it becomes an unallowed sentinel, so the
+    command prompts instead of being read wrongly.
   * anything unknown         -> no decision (the normal one-time prompt) and the command is
     logged to ``.claude/permission-unknowns.log``. If the user then approves it,
     ``permission_recorder.py`` (PostToolUse) appends a grant to the ledger so the same
@@ -90,6 +93,13 @@ _WRAPPERS: frozenset[str] = frozenset(
 )
 _ENV_ASSIGN: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _SUB_TOKEN: str = "__SUB__"  # placeholder left where a $(...)/backtick substitution was extracted
+# Stand-in part for a substitution body the gate refuses to read (see _is_opaque): it matches no
+# allow key, and the leading underscores make it unpromotable by the recorder, so a command
+# carrying one always prompts instead of being classified on a guessed body.
+_OPAQUE_SUBSTITUTION: str = "__opaque_substitution__"
+# Characters whose Bash meaning the naive delimiting in _substitution_end cannot honour: they move
+# or hide the real closing delimiter. A body containing any of them is opaque.
+_OPAQUE_BODY_CHARS: frozenset[str] = frozenset("'\"\\#`")
 _HEREDOC: re.Pattern[str] = re.compile(r"<<-?\s*(?P<q>['\"]?)(?P<tag>\w+)(?P=q)")
 
 
@@ -123,52 +133,90 @@ def ask_match(command: str, ledger: dict[str, Any]) -> str | None:
     return None
 
 
+def _substitution_end(command: str, body: int, backtick: bool) -> int:
+    """Index just past a substitution's closing delimiter, or -1 when it is never closed.
+
+    ``body`` is the index of the first character inside the substitution. The scan is deliberately
+    naive — a backtick body ends at the next backtick, a ``$(`` body at the ``)`` that brings a raw
+    paren count back to zero — because delimiting one exactly takes Bash's own lexer: quoting,
+    escapes, comments and nesting all move the real end. Correctness comes from ``_is_opaque``
+    instead, which refuses to classify any body those rules could apply to.
+    """
+    if backtick:
+        end = command.find("`", body)
+        return -1 if end < 0 else end + 1
+    depth, i, n = 1, body, len(command)
+    while i < n:
+        if command[i] == "(":
+            depth += 1
+        elif command[i] == ")":
+            depth -= 1
+            if not depth:
+                return i + 1
+        i += 1
+    return -1
+
+
+def _is_opaque(body: str) -> bool:
+    """True when Bash might end this substitution body somewhere other than the naive scan did.
+
+    A quote, a backslash, a ``#`` comment, a backtick or a nested ``$(`` each move or hide the
+    real closing delimiter, so the extracted text may be neither the whole body nor a command.
+    The caller replaces such a body with ``_OPAQUE_SUBSTITUTION`` instead of classifying it: the
+    gate then prompts, which is the only safe direction — it can ask more often than an exact
+    reading would, never allow more.
+    """
+    return any(char in _OPAQUE_BODY_CHARS for char in body) or "$(" in body
+
+
 def _extract_substitutions(command: str) -> tuple[str, list[str]]:
-    """Pull ``$(...)`` (nested) and backtick bodies out of the command.
+    """Pull ``$(...)`` and backtick bodies out of the command.
 
     Returns the outer command with each substitution replaced by ``__SUB__``, plus the list of
     inner commands to classify on their own. Single-quoted text is literal (no substitution);
     inside double quotes substitutions ARE live, so only single quotes suppress extraction.
+    Quote tracking is two-state like ``_split_segments``: an apostrophe inside double quotes
+    (``echo "it's $(curl ...)"``) is literal and must not hide the substitution that follows it —
+    treating it as an opening quote made the gate allow an unclassified command.
+
+    A body that is opaque (``_is_opaque``) or never closed yields ``_OPAQUE_SUBSTITUTION`` in
+    place of an inner command, so it prompts; the rest of the outer command is classified as
+    usual.
     """
     inners: list[str] = []
     out: list[str] = []
     i, n = 0, len(command)
-    in_single = False
+    quote: str | None = None
     while i < n:
         char = command[i]
-        if in_single:
+        if quote == "'":  # single quotes are fully literal — not even a backslash escapes
             out.append(char)
             if char == "'":
-                in_single = False
+                quote = None
             i += 1
             continue
-        if char == "'":
-            in_single = True
-            out.append(char)
-            i += 1
-        elif char == "\\" and i + 1 < n:
+        if char == "\\" and i + 1 < n:
             out.append(command[i : i + 2])
             i += 2
-        elif command.startswith("$(", i):
-            depth, j = 1, i + 2
-            while j < n and depth:
-                if command[j] == "(":
-                    depth += 1
-                elif command[j] == ")":
-                    depth -= 1
-                j += 1
-            inners.append(command[i + 2 : j - 1])
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+            out.append(char)
+            i += 1
+        elif char == "'" and quote is None:
+            quote = "'"
+            out.append(char)
+            i += 1
+        elif command.startswith("$(", i) or char == "`":
+            backtick = char == "`"
+            body = i + (1 if backtick else 2)
+            end = _substitution_end(command, body, backtick)
             out.append(f" {_SUB_TOKEN} ")
-            i = j
-        elif char == "`":
-            j = command.find("`", i + 1)
-            if j == -1:
-                out.append(char)
-                i += 1
-            else:
-                inners.append(command[i + 1 : j])
-                out.append(f" {_SUB_TOKEN} ")
-                i = j + 1
+            if end < 0:  # never closed: the rest of the command is unreadable too
+                inners.append(_OPAQUE_SUBSTITUTION)
+                break
+            inner = command[body : end - 1]
+            inners.append(_OPAQUE_SUBSTITUTION if _is_opaque(inner) else inner)
+            i = end
         else:
             out.append(char)
             i += 1

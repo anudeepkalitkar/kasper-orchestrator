@@ -65,7 +65,7 @@ values in payloads, logs, error reports, or pasted output.
 **`.claude/permissions-ledger.json` is the single source of truth for what Bash may auto-run
 and what must be confirmed.** The moving parts:
 - **Gate** (`.claude/scripts/bash_permission_gate.py`, PreToolUse on Bash): decomposes any command —
-  compounds, pipelines, env prefixes, wrappers, loops, nested substitutions — and auto-allows when
+  compounds, pipelines, env prefixes, wrappers, loops, substitutions — and auto-allows when
   every part is covered. Guarded patterns force a prompt showing the ledger's note. Unknowns fall
   through to a one-time prompt and are logged to `.claude/permission-unknowns.log`.
 - **Recorder** (`.claude/scripts/permission_recorder.py`, PostToolUse on Bash): a granted prompt is

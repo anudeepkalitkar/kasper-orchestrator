@@ -17,6 +17,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 
@@ -32,9 +33,18 @@ SESSIONS = "sessions"
 
 
 @pytest.fixture
-def project_dirs(repo_root: Path) -> ModuleType:
-    """The hook script under test, loaded from its path in this checkout."""
-    return load_script(repo_root, "project_dirs")
+def project_dirs(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Load the hook with an offline, non-private visibility default."""
+    module = load_script(repo_root, "project_dirs")
+    monkeypatch.setattr(module, "_is_private_repo", Mock(return_value=False))
+    return module
+
+
+@pytest.fixture
+def private_project_dirs(project_dirs: ModuleType, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Select private visibility without invoking GitHub."""
+    monkeypatch.setattr(project_dirs, "_is_private_repo", Mock(return_value=True))
+    return project_dirs
 
 
 @pytest.fixture
@@ -64,7 +74,7 @@ def test_a_fresh_repo_gets_every_entry_in_the_local_exclude_file(
     project_dirs: ModuleType, repo: Path
 ) -> None:
     """All four entries land in ``.git/info/exclude``, appended after git's own header."""
-    project_dirs._ensure_excluded(repo)
+    assert project_dirs._ensure_excluded(repo) is False
     lines = _lines(_exclude(repo))
     assert lines[-4:] == ENTRIES
     assert lines[0].startswith("# git ls-files")
@@ -126,8 +136,67 @@ def test_a_directory_that_is_not_a_repo_gets_nothing(
     inside some other repository, the test fails here rather than writing into it.
     """
     assert project_dirs._exclude_file(tmp_path) is None
-    project_dirs._ensure_excluded(tmp_path)
+    assert project_dirs._ensure_excluded(tmp_path) is None
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_private_repo_excludes_only_the_three_local_directories(
+    private_project_dirs: ModuleType, repo: Path
+) -> None:
+    """Private ADRs remain stageable and no shared gitignore is created."""
+    before = _exclude(repo).read_bytes()
+    assert private_project_dirs._ensure_excluded(repo) is True
+    assert _exclude(repo).read_bytes() == before + b"claude-memory/\nclaude-temp/\n/tasks/\n"
+    assert not (repo / ".gitignore").exists()
+    checked = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        input="docs/adr/0001.md\ntasks/010.md\nclaude-memory/note.md\nclaude-temp/scratch\n",
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert checked.stdout.splitlines() == [
+        "tasks/010.md",
+        "claude-memory/note.md",
+        "claude-temp/scratch",
+    ]
+
+
+@pytest.mark.parametrize("adr", ["/docs/adr/", "docs/adr/", "docs/adr", "/docs/adr"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_private_migration_removes_only_the_adr_entry(
+    private_project_dirs: ModuleType, repo: Path, adr: str, newline: str
+) -> None:
+    """Both old spellings disappear while comments, other patterns, and CRLF survive."""
+    kept = ["# /docs/adr/", "*.log", *ENTRIES[:3], "docs/adr-extra/", "!docs/adr/keep.md"]
+    _exclude(repo).write_bytes((newline.join([*kept, adr]) + newline).encode())
+    gitignore = repo / ".gitignore"
+    original = b"*.log\r\nbuild/\r\n"
+    gitignore.write_bytes(original)
+
+    assert private_project_dirs._ensure_excluded(repo) is True
+
+    assert _exclude(repo).read_bytes() == (newline.join(kept) + newline).encode()
+    assert gitignore.read_bytes() == original
+
+
+@pytest.mark.parametrize("private", [True, False])
+def test_a_second_run_does_not_write_the_exclude_file(
+    project_dirs: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch, private: bool
+) -> None:
+    """Idempotence means no write at all, not merely rewriting identical bytes."""
+    monkeypatch.setattr(project_dirs, "_is_private_repo", Mock(return_value=private))
+    project_dirs._ensure_excluded(repo)
+    before = _exclude(repo).read_bytes()
+    write = Mock(side_effect=AssertionError("unchanged exclude must not be written"))
+    monkeypatch.setattr(Path, "write_bytes", write)
+
+    assert project_dirs._ensure_excluded(repo) is private
+
+    write.assert_not_called()
+    assert _exclude(repo).read_bytes() == before
 
 
 # ---------------------------------------------------------------- session id (ADR-0007 §6)

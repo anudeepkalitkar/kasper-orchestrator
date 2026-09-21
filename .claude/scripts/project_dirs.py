@@ -4,12 +4,14 @@
 Creates ``<root>/claude-memory/`` and ``<root>/claude-temp/`` and points the harness memory
 directory (``~/.claude/projects/<slug>/memory``) at ``<root>/claude-memory`` — so auto-memory
 reads and writes land in the project, travel with its backups, and die with it, never in the
-global state dir. Those two dirs, plus ``/tasks/`` and ``/docs/adr/`` — the local task docs
-and decision records — are excluded locally via ``.git/info/exclude``, never in the project's
-``.gitignore``: they are one developer's working files, not a fact about the repo. The two
-doc dirs are only excluded, never created, and all four entries are root-anchored where it
-matters, so a project's own ``src/tasks/`` keeps being tracked. Idempotent: safe to run on
-every session start.
+global state dir. Those two dirs, plus ``/tasks/`` — the local task
+docs — are excluded locally via ``.git/info/exclude``, never in the project's ``.gitignore``:
+they are one developer's working files, not a fact about the repo. ``/docs/adr/`` joins them
+only where the decision record stays local — a public repo, or one whose visibility cannot be
+read; in a private repo the ADRs are committed, so the entry is left out and an earlier run's
+line is removed. The doc dirs are only excluded, never created, and the entries are
+root-anchored where it matters, so a project's own ``src/tasks/`` keeps being tracked.
+Idempotent: safe to run on every session start.
 
 Inside ``claude-temp/`` it also prepares this session's scratch —
 ``claude-temp/sessions/<session_id>/``, so two agents' files in one project cannot collide by
@@ -22,6 +24,7 @@ ordinary user's right, so the hook never asks the user to change a system settin
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -33,6 +36,12 @@ if sys.platform == "win32":  # stdlib, but Windows-only — no import to make el
     import _winapi
 
 IGNORE_ENTRIES: tuple[str, ...] = ("claude-memory/", "claude-temp/", "/tasks/", "/docs/adr/")
+
+#: The decision record — excluded in a public repo, committed (so never excluded) in a private one.
+ADR_ENTRY: str = "/docs/adr/"
+
+#: Seconds the visibility lookup may take before the hook falls back to "not private".
+VISIBILITY_TIMEOUT_S: float = 5.0
 
 #: The scratch root, and the container inside it this hook gives each session.
 SCRATCH_DIR: str = "claude-temp"
@@ -69,29 +78,79 @@ def _exclude_file(root: Path) -> Path | None:
     return path if path.is_absolute() else root / path
 
 
-def _ensure_excluded(root: Path) -> None:
+def _is_private_repo(root: Path) -> bool:
+    """Say whether ``root``'s GitHub repository is private.
+
+    Asks the ``gh`` CLI, the only thing on this machine that knows a remote's visibility.
+    Every other outcome — a public or internal repo, ``gh`` missing or unrunnable, no remote,
+    not logged in, a call that hangs — answers "not private", because that fallback keeps the
+    decision record local-only rather than risking it being staged into a public repo. The
+    lookup never raises: a SessionStart that died here would leave the repo with no exclusions
+    and no memory link at all, so a launch failure is reported on stderr and swallowed.
+
+    Args:
+        root: The project root; the lookup runs there so gh resolves that repo's remote.
+
+    Returns:
+        True only when gh reports ``PRIVATE``.
+    """
+    try:
+        done = subprocess.run(
+            ["gh", "repo", "view", "--json", "visibility", "-q", ".visibility"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=VISIBILITY_TIMEOUT_S,
+            # An inherited GH_REPO would answer for *that* repo, not the checkout at ``root``.
+            env={k: v for k, v in os.environ.items() if k != "GH_REPO"},
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # Best-effort diagnostic: a broken or closed stderr must not undo the fallback.
+        with contextlib.suppress(OSError, ValueError):
+            print(
+                f"Repo visibility unknown ({type(exc).__name__}); ADRs stay local-only.",
+                file=sys.stderr,
+            )
+        return False
+    return done.returncode == 0 and done.stdout.strip() == "PRIVATE"
+
+
+def _ensure_excluded(root: Path) -> bool | None:
     """Add the local-only dirs to ``.git/info/exclude`` — never the project's ``.gitignore``.
 
     The entries are one developer's local state, so they belong in the repo's private exclude
-    file, which is never committed and never shows up in anyone else's diff. Bytes are read
-    and written raw so an existing file keeps its own newline style (CRLF stays CRLF).
+    file, which is never committed and never shows up in anyone else's diff. ``/docs/adr/`` is
+    the one conditional entry: a private repo commits its ADRs, so there the entry is left out
+    and a line an earlier run wrote is dropped. Bytes are read and written raw so an existing
+    file keeps its own newline style (CRLF stays CRLF), and a run that changes nothing rewrites
+    nothing.
 
     Args:
         root: The project root; a non-repo root is left untouched.
+
+    Returns:
+        Whether the repo is private, or None when ``root`` is not a git repo at all.
     """
     path = _exclude_file(root)
     if path is None:
-        return
+        return None
+    private = _is_private_repo(root)
     text = path.read_bytes().decode("utf-8") if path.is_file() else ""
+    lines = text.splitlines()
+    adr = ADR_ENTRY.strip("/")
     # Compare stripped of slashes so an existing ``tasks/`` counts as covering ``/tasks/``.
-    present = {line.strip().strip("/") for line in text.splitlines()}
-    missing = [e for e in IGNORE_ENTRIES if e.strip("/") not in present]
-    if not missing:
-        return
+    kept = [line for line in lines if not (private and line.strip().strip("/") == adr)]
+    present = {line.strip().strip("/") for line in kept}
+    wanted = IGNORE_ENTRIES if not private else tuple(e for e in IGNORE_ENTRIES if e != ADR_ENTRY)
+    missing = [e for e in wanted if e.strip("/") not in present]
+    if kept == lines and not missing:
+        return private
     newline = "\r\n" if "\r\n" in text else "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    out = newline.join(text.splitlines() + missing) + newline
-    path.write_bytes(out.encode("utf-8"))
+    body = kept + missing
+    path.write_bytes((newline.join(body) + newline if body else "").encode("utf-8"))
+    return private
 
 
 def _harness_slug(root: Path) -> str:
@@ -196,7 +255,11 @@ def _session_id(value: object) -> str | None:
 
 
 def main() -> None:
-    """Create the project-local claude dirs, wire the harness memory path, report scratch."""
+    """Create the project-local claude dirs, wire the harness memory path, report scratch.
+
+    Prints, for a git repo, where this project's ADRs live — the exclude file's split is
+    invisible otherwise, and the session needs to know before it writes one.
+    """
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
@@ -212,7 +275,9 @@ def main() -> None:
     if session_id is not None:
         (temp / SESSIONS_DIR / session_id).mkdir(parents=True, exist_ok=True)
         print(f"Session scratch: {SCRATCH_DIR}/{SESSIONS_DIR}/{session_id}/")
-    _ensure_excluded(root)
+    private = _ensure_excluded(root)
+    if private is not None:
+        print("ADRs: tracked (private repo)" if private else "ADRs: local-only")
     _link_harness_memory(root, mem)
 
 

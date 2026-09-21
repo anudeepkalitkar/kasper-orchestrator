@@ -9,11 +9,13 @@ Allowed without asking:
 1. **The project root** — the folder where Claude/KASPER was summoned (the session's working
    directory), read/write, all subfolders. Everything the session creates stays inside it:
    memory in `<root>/claude-memory/`, temp/scratch in `<root>/claude-temp/` — both created by
-   the SessionStart hook (`project_dirs.py`), which also keeps them, `/tasks/` and `/docs/adr/`,
-   out of git through the repo's **local** `.git/info/exclude` — never the project's shared
-   `.gitignore`, because a personal rule must not dirty someone else's checkout. The two doc
-   dirs are excluded only, created on demand. The hook also points the harness memory path at
-   the project's folder. Nothing cleans scratch up: `claude-temp/` accumulates across
+   the SessionStart hook (`project_dirs.py`), which also keeps them and `/tasks/` out of git
+   through the repo's **local** `.git/info/exclude` — never the project's shared `.gitignore`,
+   because a personal rule must not dirty someone else's checkout. `/docs/adr/` joins them only
+   where the decision record stays local: the hook asks `gh` for the repo's visibility once per
+   session and, in a `PRIVATE` repo, leaves that entry out (dropping one an earlier run wrote) so
+   the ADRs are committed with the code. The doc dirs are excluded only, created on demand.
+   The hook also points the harness memory path at the project's folder. Nothing cleans scratch up: `claude-temp/` accumulates across
    sessions, and emptying it is the human's to do, by hand, whenever they choose.
 2. **Reads anywhere non-sensitive** — library code, installed packages, docs.
 

@@ -15,11 +15,13 @@ prompts in `.claude/codex/`, the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and
 the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). That, the
 installer (`install.py`) with its `tests/` and `pyproject.toml`, this README and `CLAUDE.md`
-are what this repo holds today. There is no `docs/adr/` or `tasks/` here: under KASPER,
-decision records and task docs are local working files — the SessionStart hook keeps them out
-of git through each repo's own `.git/info/exclude`, never a shared `.gitignore` — so they stay
-on the machine that wrote them and out of everyone else's checkout. This repo is the
-project's only home; further components land here as development continues.
+are what this repo holds today. There is no `docs/adr/` or `tasks/` here: under KASPER task docs
+are local working files in every repo, and so are decision records in a public repo like this one
+— the SessionStart hook keeps them out of git through each repo's own `.git/info/exclude`, never a
+shared `.gitignore` — so they stay on the machine that wrote them and out of everyone else's
+checkout. In a private repo the hook leaves `docs/adr/` out of that list and the ADRs are
+committed with the code. This repo is the project's only home; further components land here as
+development continues.
 
 ## Use
 

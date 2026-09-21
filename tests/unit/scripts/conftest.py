@@ -13,6 +13,12 @@ from tests.helpers.hooks import load_script
 
 
 @pytest.fixture
+def project_dirs(repo_root: Path) -> ModuleType:
+    """Load the SessionStart hook without invoking its filesystem effects."""
+    return load_script(repo_root, "project_dirs")
+
+
+@pytest.fixture
 def permission_gate(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """Import the gate with its configuration filesystem probes replaced by fakes."""
     monkeypatch.setattr(Path, "is_file", lambda path: False)

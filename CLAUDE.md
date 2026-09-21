@@ -12,7 +12,8 @@ the project's only home. This file is the master index.
 Full rule: [rules/boundaries.md](.claude/rules/boundaries.md). Writes only inside the
 **summoned project root** (the folder where the session was started) — memory in
 `<root>/claude-memory/`, temp in `<root>/claude-temp/` (it accumulates — nothing sweeps it;
-the human clears it), both kept out of git through the repo's local `.git/info/exclude`;
+the human clears it), both kept out of git through the repo's local `.git/info/exclude` — which
+also carries `tasks/` everywhere, and `docs/adr/` unless the repo is private;
 `~/.claude/` is read-free but edited only with permission; reads free except sensitive
 paths (ask first). Network reads free; network writes deny-by-default (standing exceptions:
 feature-branch pushes, `gh` ops on own PRs, calls the project's own code makes). The
@@ -40,8 +41,8 @@ around a prompt.
 6. [delegation](.claude/rules/delegation.md) — route work to the agent roster, fan out
    independent work in parallel; the writer never grades its own work.
 7. [documentation](.claude/rules/documentation.md) — durable docs in `docs/`, committed;
-   append-only ADRs in `docs/adr/` and living task docs in `tasks/` are local-only, kept out
-   of git, never committed; drift is a defect.
+   living task docs in `tasks/` are local-only, never committed; append-only ADRs in
+   `docs/adr/` are committed in a private repo, local-only in a public one; drift is a defect.
 
 ## KASPER — one session, five agents and two Codex seats
 
@@ -97,8 +98,9 @@ Every hook command runs through one dispatcher —
 
 - SessionStart → [project_dirs.py](.claude/scripts/project_dirs.py) (creates
   `claude-memory/` + `claude-temp/` in the project root, excludes those two plus `/tasks/`
-  and `/docs/adr/` in the repo's local `.git/info/exclude` — never the shared `.gitignore` —
-  wires the harness memory path into the project, and creates
+  in the repo's local `.git/info/exclude` — never the shared `.gitignore` — and `/docs/adr/`
+  too unless `gh` reports the repo `PRIVATE`, printing `ADRs: tracked (private repo)` or
+  `ADRs: local-only`; wires the harness memory path into the project, and creates
   `claude-temp/sessions/<id>/`, printing that scratch path into context).
 - PreToolUse on Bash → [bash_permission_gate.py](.claude/scripts/bash_permission_gate.py)
   (ledger gate; quote/comment-aware; ask/unknown falls through to the native prompt).
@@ -121,10 +123,11 @@ Every hook command runs through one dispatcher —
 What this repo holds: the config under [.claude/](.claude/) — including the Codex seat
 prompts in [.claude/codex/](.claude/codex/), the eighth path `install.py` owns — this file,
 [README.md](README.md), and the installer [install.py](install.py) with its `tests/` and
-`pyproject.toml`. The decision record in `docs/adr/` and the task records in `tasks/` are local
-working files — never committed, so a clone carries neither. (This repo also lists all four
-local-only dirs in its own `.gitignore` — its own choice, not the hook's doing: the hook
-writes only git's local `.git/info/exclude`.) The gate runs here for the first time, with a
+`pyproject.toml`. This repo is **public**, so its decision record in `docs/adr/` stays local, as
+do the task records in `tasks/` — never committed, so a clone carries neither. (In a private repo
+the hook leaves `docs/adr/` tracked and its ADRs are committed; `tasks/` is local everywhere.)
+(This repo also lists all four local-only dirs in its own `.gitignore` — its own choice, not the
+hook's doing: the hook writes only git's local `.git/info/exclude`.) The gate runs here for the first time, with a
 **bare `mypy`** —
 `ruff check . && mypy && pytest tests/unit`: mypy's crawl skips dot-directories, so
 `pyproject.toml` lists `.claude/scripts` explicitly rather than the gate passing a path.

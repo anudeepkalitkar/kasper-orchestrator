@@ -247,6 +247,12 @@
       "note": "auto-recorded: user approved this command",
       "example": "command -v codex; codex --version 2>&1",
       "added": "2026-09-16"
+    },
+    {
+      "key": "gh repo view",
+      "note": "auto-recorded: user approved this command",
+      "example": "gh repo view --json visibility -q '.visibility' 2>&1",
+      "added": "2026-09-21"
     }
   ],
   "denials": []

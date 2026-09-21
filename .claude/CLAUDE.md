@@ -13,7 +13,8 @@ matches what was installed.
 Full rule: [rules/boundaries.md](rules/boundaries.md). Writes only inside the
 **summoned project root** (the folder where the session was started) — memory in
 `<root>/claude-memory/`, temp in `<root>/claude-temp/` (it accumulates — nothing sweeps it;
-the human clears it), both kept out of git through the repo's local `.git/info/exclude`;
+the human clears it), both kept out of git through the repo's local `.git/info/exclude` — which
+also carries `tasks/` everywhere, and `docs/adr/` unless the repo is private;
 `~/.claude/` is read-free but edited only with permission; reads free except sensitive
 paths (ask first). Network reads free; network writes deny-by-default (standing exceptions:
 feature-branch pushes, `gh` ops on own PRs, calls the project's own code makes). The
@@ -41,8 +42,8 @@ around a prompt.
 6. [delegation](rules/delegation.md) — route work to the agent roster, fan out
    independent work in parallel; the writer never grades its own work.
 7. [documentation](rules/documentation.md) — durable docs in `docs/`, committed;
-   append-only ADRs in `docs/adr/` and living task docs in `tasks/` are local-only, kept out
-   of git, never committed; drift is a defect.
+   living task docs in `tasks/` are local-only, never committed; append-only ADRs in
+   `docs/adr/` are committed in a private repo, local-only in a public one; drift is a defect.
 
 ## KASPER — one session, five agents and two Codex seats
 
@@ -96,8 +97,9 @@ Every hook command runs through one dispatcher —
 
 - SessionStart → [project_dirs.py](scripts/project_dirs.py) (creates
   `claude-memory/` + `claude-temp/` in the project root, excludes those two plus `/tasks/`
-  and `/docs/adr/` in the repo's local `.git/info/exclude` — never the shared `.gitignore` —
-  wires the harness memory path into the project, and creates
+  in the repo's local `.git/info/exclude` — never the shared `.gitignore` — and `/docs/adr/`
+  too unless `gh` reports the repo `PRIVATE`, printing `ADRs: tracked (private repo)` or
+  `ADRs: local-only`; wires the harness memory path into the project, and creates
   `claude-temp/sessions/<id>/`, printing that scratch path into context).
 - PreToolUse on Bash → [bash_permission_gate.py](scripts/bash_permission_gate.py)
   (ledger gate; quote/comment-aware; ask/unknown falls through to the native prompt).
@@ -119,8 +121,9 @@ Every hook command runs through one dispatcher —
 
 Everything above lives beside this file, under `~/.claude/` — the Codex seat prompts in
 `codex/` among them. The source of truth is the
-kasper-orchestrator repo — the project's only home; its decision record lives in that
-clone's local, git-excluded `docs/adr/`, never in the repo itself. Change the config there
+kasper-orchestrator repo — the project's only home; that repo is public, so its decision record
+lives in the clone's local, git-excluded `docs/adr/`, never in the repo itself — in a private repo
+the hook leaves `docs/adr/` tracked and the ADRs are committed with the code. Change the config there
 and run its `install.py` to bring this home up to date; never hand-edit this home copy and
 expect it to survive — an install replaces the files it owns (backing up what it overwrites)
 — and never let a session rewrite it silently.

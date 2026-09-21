@@ -94,7 +94,9 @@ writer: subtasks with a runnable done-check, a cap, and an owner named — the v
 per task (the Codex tester seat, then the reviewer seat); ticked only
 when the check actually ran green; cap-exhausted items recorded **blocked**, never done.
 It is the live state of the work, and the reason a fresh session can pick it up. `tasks/` is
-kept out of git in every project — the doc is local state, never committed, as is `docs/adr/`.
+kept out of git in every project — the doc is local state, never committed. `docs/adr/` follows
+the repo instead: committed in a private repo, local-only in a public one (the SessionStart hook
+prints which).
 
 ## Ending KASPER
 

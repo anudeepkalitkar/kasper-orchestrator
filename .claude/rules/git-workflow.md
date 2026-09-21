@@ -24,9 +24,12 @@ branch promotion and not an automated pipeline.
 1. **Feature branch per task**, branched from `development` (`feat/<task-slug>`, `fix/<task-slug>`).
 2. **Checkpoint per subtask**: when a subtask completes and leaves the code working, commit + push
    via `/checkpoint` (the script **refuses on shared branches** — `development`/`main`/`master`,
-   plus legacy `qa`). One subtask ≈ one commit. Then update the task doc — `tasks/` and
-   `docs/adr/` are excluded from git locally (`.git/info/exclude`) and never staged, so a
-   checkpoint that commits either is a defect ([[documentation]]).
+   plus legacy `qa`). One subtask ≈ one commit. Then update the task doc — `tasks/` is excluded
+   from git locally (`.git/info/exclude`) and never staged, so a checkpoint that commits it is a
+   defect, and so is one that stages `docs/adr/` in a **public** repo ([[documentation]]). In a
+   **private** repo the ADRs are tracked — the SessionStart hook leaves them out of the exclude
+   file — and a private repo whose ADRs are still untracked gets them staged in a `chore` commit
+   of their own (`git add docs/adr`) the next time a task lands there.
 3. **PR per task** to **`development`** (fall back to `main`/`master` only if a repo has no
    `development`). Link the PR in the task doc.
 4. **Autonomy envelope**: pushing `feature/*`/`fix/*` and opening the task's PR to `development`

@@ -67,6 +67,15 @@ CLI (`npm install -g @openai/codex`, then `codex login`); without it the seat st
 code 3 and tells you to sign in. On Windows, Git Bash must be installed: Claude Code runs
 the hook commands through it.
 
+On native Windows the seats need one more step: Codex runs them under a restricted sandbox
+policy, and it can only honour one when its config declares a native sandbox backend — a
+version upgrade alone does not supply it. With none declared, `codex doctor` reports the
+sandbox backend disabled, and a headless seat, whose approvals are set to never so it cannot
+ask, is rejected with a sandbox error before any verdict. Declare the native sandbox in the
+Codex config until `codex doctor` shows the backend enabled — unelevated mode works, elevated
+is stronger — and re-check that after every `winget upgrade OpenAI.Codex`, which overwrites
+the folder Codex is installed into.
+
 Then, in any project:
 
 ```bash

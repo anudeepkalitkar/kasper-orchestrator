@@ -4,20 +4,23 @@
 
 One Claude Code session that runs your project: you talk to it, it delegates the real work
 to discipline **subagents** — four developers (Python, TypeScript, Terraform, DevOps),
-documentor, git-workflow, researcher — and, once per
-task, to two verification seats that run on the OpenAI Codex CLI — tester and code-reviewer —
-and keeps the task doc while they work. Claude Code is the mechanism; KASPER is a skill, a set
-of agent definitions, standing rules, and a few hook scripts.
+architect (designs into `docs/design/`), documentor, git-workflow, researcher — and to three
+verification seats that run on the OpenAI Codex CLI: tester and code-reviewer once per task, and
+arch-reviewer on a design before it is built. It keeps the task doc while they work. Claude Code
+is the mechanism; KASPER is a skill, a set of agent definitions, standing rules, and a few hook
+scripts.
 
 What KASPER *is* lives under `.claude/`: the `/kasper` skill in `.claude/skills/kasper/`,
 the agent definitions in `.claude/agents/` (one file per discipline — edit one and the
 next delegation uses it; its frontmatter pins that agent's model and tools), the Codex seat
-prompts in `.claude/codex/`, the standing
+prompts in `.claude/codex/` (with one per-stack section in `.claude/codex/stacks/`, appended to a
+seat's prompt by `--stack`), the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and
 the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). That, the
 installer (`install.py`) with its `tests/` and `pyproject.toml`, `docs/licenses/`, this README
-and `CLAUDE.md` are what this repo holds today. Parts of the agent prompts — the framework
-method inside `python-developer` and `typescript-developer` — are adapted from
+and `CLAUDE.md` are what this repo holds today. Parts of the prompts — the framework method inside
+`python-developer` and `typescript-developer`, and the Python and TypeScript stack sections in
+`.claude/codex/stacks/` — are adapted from
 [affaan-m/ECC](https://github.com/affaan-m/ECC) under the MIT licence, kept at
 `docs/licenses/ECC-LICENSE`. There is no `docs/adr/` or `tasks/` here: under KASPER task docs
 are local working files in every repo, and so are decision records in a public repo like this one

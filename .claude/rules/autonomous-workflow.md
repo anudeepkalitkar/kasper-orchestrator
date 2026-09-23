@@ -32,9 +32,11 @@ mapping to **one git checkpoint** ([[git-workflow]]). Track them in the task doc
 
 **Verification is once per task, not per subtask:** the developer implements the whole task,
 then one Codex **tester** seat authors the tests and runs the gate, then one Codex **reviewer**
-seat judges the diff — `python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file>
---out <file>`. The writer still never grades its own work; owner ≠ verifier now also means
-vendor ≠ vendor ([[delegation]]).
+seat judges the diff — `python3 .claude/scripts/codex_seat.py tester|reviewer|arch-reviewer
+--brief <file> --out <file> [--stack <name>...]`, one `--stack` per stack the task touches. Design
+that needs judging *before* it is built goes to the **arch-reviewer** seat instead, after the
+architect writes the spec and before a developer starts. The writer still never grades its own
+work; owner ≠ verifier now also means vendor ≠ vendor ([[delegation]]).
 
 ## 4 · The gate — the baseline done-check
 Run the project's tests **directly** — no Makefile, no CI. **Python:**

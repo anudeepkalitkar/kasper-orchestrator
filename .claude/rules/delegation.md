@@ -16,10 +16,16 @@ cross-discipline routes back through KASPER.
   reports the plan; **never applies** and never edits state; same scope limits.
 - **devops-developer** — Dockerfiles, docker compose, GitHub Actions, shell scripts. Builds and
   validates locally; **never pushes an image or deploys**; same scope limits.
-- **tester seat (Codex)** · **code-reviewer seat (Codex)** — not subagents. KASPER runs
-  `python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file> --out <file>` once per
-  task, with the seats' role prompts in `.claude/codex/`: the tester authors tier-correct tests
-  and runs the gate, the reviewer judges the diff with ranked findings and edits nothing.
+- **architect** — turns a stated goal into a design spec in `docs/design/` and, when the decision
+  is hard to reverse, a proposed ADR in `docs/adr/`. Docs only: never production code, never tests,
+  never commits; a fork it cannot settle becomes an open question and a stop-and-report.
+- **tester seat (Codex)** · **code-reviewer seat (Codex)** · **arch-reviewer seat (Codex)** — not
+  subagents. KASPER runs `python3 .claude/scripts/codex_seat.py tester|reviewer|arch-reviewer
+  --brief <file> --out <file> [--stack <name>...]`, with the seats' role prompts in
+  `.claude/codex/` and one stack section from `.claude/codex/stacks/` per stack the task touches:
+  the tester authors tier-correct tests and runs the gate, the reviewer judges the diff with ranked
+  findings, and the arch-reviewer judges the architect's design before it is built. The reviewer
+  and the arch-reviewer edit nothing at all; the tester writes only tests.
 - **documentor** — owns the written truth (`docs/`, README, and the local-only `tasks/` docs);
   docs only, never production code or tests.
 - **git-workflow** — the only agent that commits, pushes, or merges; checkpoints on the Codex

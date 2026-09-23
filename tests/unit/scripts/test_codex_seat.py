@@ -14,9 +14,15 @@ import pytest
 @pytest.mark.parametrize(
     ("seat", "prefix"),
     [
-        ("tester", ["codex", "exec", "--sandbox", "workspace-write"]),
-        ("reviewer", ["codex", "exec", "review"]),
-        ("arch-reviewer", ["codex", "exec", "--sandbox", "read-only"]),
+        (
+            "tester",
+            ["codex", "exec", "-c", "features.multi_agent=false", "--sandbox", "workspace-write"],
+        ),
+        ("reviewer", ["codex", "exec", "review", "-c", "features.multi_agent=false"]),
+        (
+            "arch-reviewer",
+            ["codex", "exec", "-c", "features.multi_agent=false", "--sandbox", "read-only"],
+        ),
     ],
 )
 def test_argv_preserves_prompt_and_output_as_single_arguments(
@@ -68,9 +74,23 @@ def test_dry_run_prints_command_and_output_without_starting_codex(
     )
     lines = capsys.readouterr().out.splitlines()
     prefix = {
-        "tester": ["codex", "exec", "--sandbox", "workspace-write"],
-        "reviewer": ["codex", "exec", "review"],
-        "arch-reviewer": ["codex", "exec", "--sandbox", "read-only"],
+        "tester": [
+            "codex",
+            "exec",
+            "-c",
+            "features.multi_agent=false",
+            "--sandbox",
+            "workspace-write",
+        ],
+        "reviewer": ["codex", "exec", "review", "-c", "features.multi_agent=false"],
+        "arch-reviewer": [
+            "codex",
+            "exec",
+            "-c",
+            "features.multi_agent=false",
+            "--sandbox",
+            "read-only",
+        ],
     }[seat]
     role = seat.capitalize()
     prompt = f"{role} role\n\n## Brief\nTask brief\n"
@@ -525,9 +545,10 @@ def test_missing_stack_names_its_installation_path_before_login(
 ) -> None:
     """A caller-local stack cannot replace a missing installed stack prompt."""
     seat_files[seat_project / ".claude/codex/stacks/missing.md"] = "Wrong caller stack"
-    assert codex_seat.main(
-        [seat, "--brief", "brief.md", "--out", "report.md", "--stack", "missing"]
-    ) == 2
+    assert (
+        codex_seat.main([seat, "--brief", "brief.md", "--out", "report.md", "--stack", "missing"])
+        == 2
+    )
     captured = capsys.readouterr()
     assert "cannot read the seat's prompt" in captured.err
     assert str(repo_root / ".claude/codex/stacks/missing.md") in captured.err
@@ -553,9 +574,9 @@ def test_arch_reviewer_requires_a_current_nonempty_report(
     if report is not None:
         seat_files[Path("report.md")] = report
     seat_process.side_effect = [Mock(returncode=0), Mock(returncode=returncode)]
-    assert codex_seat.main(
-        ["arch-reviewer", "--brief", "brief.md", "--out", "report.md"]
-    ) == expected
+    assert (
+        codex_seat.main(["arch-reviewer", "--brief", "brief.md", "--out", "report.md"]) == expected
+    )
     captured = capsys.readouterr()
     assert captured.out.splitlines()[-1] == "report.md"
     if expected == 5:

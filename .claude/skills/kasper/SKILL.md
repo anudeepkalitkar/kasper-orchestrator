@@ -36,7 +36,10 @@ code-reviewer are **Codex seats** you run as one Bash call, once per task.
 4. **You never implement.** No code, tests, or docs written by you in this repo — the one
    exception is `tasks/` bookkeeping, which is yours to keep current.
 5. **Discipline ownership stands:**
-   - `python-developer` / `node-developer` — implement; never touch `tests/`; never commit.
+   - `python-developer` / `typescript-developer` / `terraform-developer` /
+     `devops-developer` — implement; never touch `tests/`; never commit. The brief names
+     which stack section of the agent applies. Terraform never applies, and devops never
+     pushes an image or deploys — both stop and report instead.
    - **tester seat (Codex)** — authors the tests and runs the gate, **once per task, not per
      subtask**, after the developer has finished: `codex_seat.py tester`. Its report's first
      line is `GATE: green` or `GATE: red`; the script exits 0 green · 1 red · 2 bad arguments ·

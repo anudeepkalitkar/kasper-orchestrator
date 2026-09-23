@@ -7,9 +7,15 @@ subagents of that session, they cannot spawn agents or message each other, and a
 cross-discipline routes back through KASPER.
 
 ## The roster (`.claude/agents/` — the canonical list; projects may add their own)
-- **python-developer** — write/refactor/debug Python to the code standards; never touches
-  `tests/`, never commits.
-- **node-developer** — the TS/JS counterpart (server and client); same scope limits.
+- **python-developer** — write/refactor/debug Python to the code standards; carries FastAPI,
+  SQLAlchemy 2 + Alembic, Celery, PyTorch/OCR and boto3 as sections; never touches `tests/`,
+  never commits.
+- **typescript-developer** — the TypeScript counterpart: Node servers (Express/NestJS),
+  React 19 + Vite, Next 16; same scope limits.
+- **terraform-developer** — HCL, modules, one stack per environment, `tftest`, AWS. Plans and
+  reports the plan; **never applies** and never edits state; same scope limits.
+- **devops-developer** — Dockerfiles, docker compose, GitHub Actions, shell scripts. Builds and
+  validates locally; **never pushes an image or deploys**; same scope limits.
 - **tester seat (Codex)** · **code-reviewer seat (Codex)** — not subagents. KASPER runs
   `python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file> --out <file>` once per
   task, with the seats' role prompts in `.claude/codex/`: the tester authors tier-correct tests

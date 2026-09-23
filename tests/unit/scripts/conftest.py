@@ -73,6 +73,7 @@ def seat_files(
     files = {
         codex_seat.ROLE_PROMPT_DIR / "tester.md": "Tester role\n",
         codex_seat.ROLE_PROMPT_DIR / "reviewer.md": "Reviewer role\n",
+        codex_seat.ROLE_PROMPT_DIR / "arch-reviewer.md": "Arch-reviewer role\n",
         Path("brief.md"): "Task brief\n",
     }
 

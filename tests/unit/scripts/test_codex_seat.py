@@ -16,12 +16,13 @@ import pytest
     [
         ("tester", ["codex", "exec", "--sandbox", "workspace-write"]),
         ("reviewer", ["codex", "exec", "review"]),
+        ("arch-reviewer", ["codex", "exec", "--sandbox", "read-only"]),
     ],
 )
 def test_argv_preserves_prompt_and_output_as_single_arguments(
     codex_seat: ModuleType, seat: str, prefix: list[str]
 ) -> None:
-    """Both seats use their required CLI form without interpreting shell text."""
+    """All seats use their required CLI form without interpreting shell text."""
     prompt = "Role\nBrief 'quoted' $(literal)"
     assert codex_seat.codex_argv(seat, Path("reports/my report.md"), prompt) == [
         *prefix,
@@ -31,19 +32,19 @@ def test_argv_preserves_prompt_and_output_as_single_arguments(
     ]
 
 
-@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 def test_prompt_places_the_selected_role_before_the_brief(
     codex_seat: ModuleType, seat_files: dict[Path, str], seat: str
 ) -> None:
     """Role instructions precede a labelled brief, preserving interior Unicode and newlines."""
     seat_files[Path("brief.md")] = "\n  Verify café\nsecond line  \n"
-    role = "Tester" if seat == "tester" else "Reviewer"
+    role = seat.capitalize()
     assert codex_seat.build_prompt(seat, Path("brief.md")) == (
         f"{role} role\n\n## Brief\nVerify café\nsecond line\n"
     )
 
 
-@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 def test_dry_run_prints_command_and_output_without_starting_codex(
     codex_seat: ModuleType,
     seat_files: dict[Path, str],
@@ -66,16 +67,12 @@ def test_dry_run_prints_command_and_output_without_starting_codex(
         == 0
     )
     lines = capsys.readouterr().out.splitlines()
-    prefix = (
-        ["codex", "exec", "--sandbox", "workspace-write"]
-        if seat == "tester"
-        else [
-            "codex",
-            "exec",
-            "review",
-        ]
-    )
-    role = "Tester" if seat == "tester" else "Reviewer"
+    prefix = {
+        "tester": ["codex", "exec", "--sandbox", "workspace-write"],
+        "reviewer": ["codex", "exec", "review"],
+        "arch-reviewer": ["codex", "exec", "--sandbox", "read-only"],
+    }[seat]
+    role = seat.capitalize()
     prompt = f"{role} role\n\n## Brief\nTask brief\n"
     assert shlex.split(lines[0]) == [
         *prefix,
@@ -96,7 +93,7 @@ def test_description_abbreviates_long_prompts(codex_seat: ModuleType) -> None:
     ]
 
 
-@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_non_repository_cwd_is_refused_before_any_work(
     codex_seat: ModuleType,
@@ -133,7 +130,7 @@ def test_non_repository_cwd_is_refused_before_any_work(
     assert "not a repository" in captured.err
 
 
-@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 @pytest.mark.parametrize("project", [Path("/projects/first"), Path("/projects/second")])
 def test_role_prompt_is_read_beside_the_script_regardless_of_cwd(
     codex_seat: ModuleType,
@@ -145,7 +142,7 @@ def test_role_prompt_is_read_beside_the_script_regardless_of_cwd(
     seat: str,
     project: Path,
 ) -> None:
-    """A different caller project cannot redirect either seat's role prompt."""
+    """A different caller project cannot redirect any seat's role prompt."""
     expected_role = repo_root / ".claude" / "codex" / f"{seat}.md"
     seat_files.clear()
     seat_files[expected_role] = "Installation role\n"
@@ -248,7 +245,7 @@ def test_login_failure_exits_three_without_running_a_seat(
     assert ("install @openai/codex" if failure == "missing" else "codex login") in captured.err
 
 
-@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 def test_exec_timeout_exits_four_and_uses_requested_deadline(
     codex_seat: ModuleType,
     seat_files: dict[Path, str],
@@ -258,7 +255,7 @@ def test_exec_timeout_exits_four_and_uses_requested_deadline(
     capsys: pytest.CaptureFixture[str],
     seat: str,
 ) -> None:
-    """Both seats use a bounded run in the repository with stdin disconnected."""
+    """All seats use a bounded run in the repository with stdin disconnected."""
     seat_process.side_effect = [Mock(returncode=0), subprocess.TimeoutExpired("codex", 7)]
     assert (
         codex_seat.main(
@@ -332,6 +329,7 @@ def test_failed_tester_session_without_report_exits_five(
     )
 
 
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 @pytest.mark.parametrize("missing", ["brief", "role"])
 def test_unreadable_prompt_exits_two_before_login(
     codex_seat: ModuleType,
@@ -339,14 +337,15 @@ def test_unreadable_prompt_exits_two_before_login(
     seat_process: Mock,
     capsys: pytest.CaptureFixture[str],
     missing: str,
+    seat: str,
 ) -> None:
     """Missing brief or role is an input error, with the output path still printed."""
-    path = Path("brief.md") if missing == "brief" else codex_seat.ROLE_PROMPT_DIR / "tester.md"
+    path = Path("brief.md") if missing == "brief" else codex_seat.ROLE_PROMPT_DIR / f"{seat}.md"
     del seat_files[path]
     assert (
         codex_seat.main(
             [
-                "tester",
+                seat,
                 "--brief",
                 "brief.md",
                 "--out",
@@ -361,7 +360,9 @@ def test_unreadable_prompt_exits_two_before_login(
     assert "cannot read the seat's prompt" in captured.err
 
 
-@pytest.mark.parametrize(("seat", "limit"), [("tester", 11), ("reviewer", 60)])
+@pytest.mark.parametrize(
+    ("seat", "limit"), [("tester", 11), ("reviewer", 60), ("arch-reviewer", 60)]
+)
 @pytest.mark.parametrize("offset", [-1, 0, 1, 20])
 def test_echo_limits_report_lines_and_prints_output_path_last(
     codex_seat: ModuleType,
@@ -380,12 +381,12 @@ def test_echo_limits_report_lines_and_prints_output_path_last(
     assert codex_seat.main([seat, "--brief", "brief.md", "--out", str(out)]) == 0
 
     expected = lines[:limit]
-    if seat == "reviewer" and offset > 0:
+    if seat != "tester" and offset > 0:
         expected.append(f"… full report in {out}")
     assert capsys.readouterr().out.splitlines() == [*expected, str(out)]
 
 
-@pytest.mark.parametrize("seat", ["tester", "reviewer"])
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
 def test_transcript_is_opened_beside_report_without_creating_a_disk_file(
     codex_seat: ModuleType,
     seat_files: dict[Path, str],
@@ -454,3 +455,131 @@ def test_unwritable_transcript_stops_before_exec(
     assert captured.out == "report.md\n"
     assert "cannot prepare report.md" in captured.err
     assert "read-only destination" in captured.err
+
+
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
+@pytest.mark.parametrize("stacks", [("a", "b"), ("b", "a"), ("a", "a")])
+def test_repeatable_stacks_reach_exec_in_requested_order(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    seat: str,
+    stacks: tuple[str, str],
+) -> None:
+    """CLI stack blocks preserve order and repeats between the role and brief."""
+    seat_files[codex_seat.STACK_PROMPT_DIR / "a.md"] = "\nRules café\nsecond line\n"
+    seat_files[codex_seat.STACK_PROMPT_DIR / "b.md"] = "Rules B\n"
+    seat_files[Path("report.md")] = "GATE: green\n"
+    argv = [seat, "--brief", "brief.md", "--out", "report.md"]
+    for name in stacks:
+        argv.extend(["--stack", name])
+
+    assert codex_seat.main(argv) == 0
+
+    blocks = {"a": "## Stack: a\nRules café\nsecond line", "b": "## Stack: b\nRules B"}
+    expected = (
+        f"{seat.capitalize()} role\n\n{blocks[stacks[0]]}\n\n"
+        f"{blocks[stacks[1]]}\n\n## Brief\nTask brief\n"
+    )
+    assert seat_process.call_args.args[0][-1] == expected
+
+
+@pytest.mark.parametrize(
+    "name", ["", "Python", "../python", "/python", "a/b", "a\\b", "a_b", "1a", "a b", "a\n"]
+)
+def test_invalid_stack_names_exit_two_before_login(
+    codex_seat: ModuleType,
+    seat_project: Path,
+    seat_process: Mock,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+) -> None:
+    """Non-slugs, including path traversal and trailing newlines, are argument errors."""
+    with pytest.raises(SystemExit) as exc:
+        codex_seat.main(["tester", "--brief", "brief.md", "--out", "report.md", "--stack", name])
+    assert exc.value.code == 2
+    assert "invalid stack name" in capsys.readouterr().err
+    seat_process.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["a", "python", "python3", "my-stack", "a0-b1"])
+def test_valid_stack_slugs_are_preserved(
+    codex_seat: ModuleType, seat_project: Path, name: str
+) -> None:
+    """Lowercase slug names retain their spelling through argument parsing."""
+    args = codex_seat.parse_args(
+        ["tester", "--brief", "brief.md", "--out", "report.md", "--stack", name]
+    )
+    assert args.stack == [name]
+
+
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
+def test_missing_stack_names_its_installation_path_before_login(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    seat_project: Path,
+    repo_root: Path,
+    capsys: pytest.CaptureFixture[str],
+    seat: str,
+) -> None:
+    """A caller-local stack cannot replace a missing installed stack prompt."""
+    seat_files[seat_project / ".claude/codex/stacks/missing.md"] = "Wrong caller stack"
+    assert codex_seat.main(
+        [seat, "--brief", "brief.md", "--out", "report.md", "--stack", "missing"]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "cannot read the seat's prompt" in captured.err
+    assert str(repo_root / ".claude/codex/stacks/missing.md") in captured.err
+    assert captured.out == "report.md\n"
+    seat_process.assert_not_called()
+
+
+@pytest.mark.parametrize("returncode", [0, 1, 7])
+@pytest.mark.parametrize(
+    ("report", "expected"),
+    [(None, 5), ("", 5), (" \n\t", 5), ("Design findings", 0), ("GATE: red\nFindings", 0)],
+)
+def test_arch_reviewer_requires_a_current_nonempty_report(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    capsys: pytest.CaptureFixture[str],
+    returncode: int,
+    report: str | None,
+    expected: int,
+) -> None:
+    """Report presence decides architecture review completion regardless of process status."""
+    if report is not None:
+        seat_files[Path("report.md")] = report
+    seat_process.side_effect = [Mock(returncode=0), Mock(returncode=returncode)]
+    assert codex_seat.main(
+        ["arch-reviewer", "--brief", "brief.md", "--out", "report.md"]
+    ) == expected
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == "report.md"
+    if expected == 5:
+        assert f"codex exited {returncode} but wrote no report" in captured.err
+    else:
+        assert captured.err == ""
+
+
+@pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
+def test_gate_verdict_is_consulted_only_for_tester(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    seat: str,
+) -> None:
+    """Review seats treat a GATE line as report text, never as their exit verdict."""
+    seat_files[Path("report.md")] = "GATE: red\nFindings"
+    verdict = Mock(wraps=codex_seat.read_gate_verdict)
+    monkeypatch.setattr(codex_seat, "read_gate_verdict", verdict)
+    assert codex_seat.main([seat, "--brief", "brief.md", "--out", "report.md"]) == (
+        1 if seat == "tester" else 0
+    )
+    if seat == "tester":
+        verdict.assert_called_once_with(Path("report.md"))
+    else:
+        verdict.assert_not_called()

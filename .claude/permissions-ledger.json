@@ -161,6 +161,10 @@
       "note": "deletes untracked files — confirm"
     },
     {
+      "pattern": "^git\\b[^&|;\\n]*(--no-verify|core\\.hooksPath)",
+      "note": "bypasses the repo's git hooks — confirm each time"
+    },
+    {
       "pattern": "\\bgh\\s+pr\\s+merge\\b",
       "note": "merges stay human (git-workflow)"
     },

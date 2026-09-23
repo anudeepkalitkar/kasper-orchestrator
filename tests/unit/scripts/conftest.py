@@ -107,3 +107,11 @@ def seat_process(codex_seat: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Moc
     run = Mock(return_value=Mock(returncode=0))
     monkeypatch.setattr(codex_seat.subprocess, "run", run)
     return run
+
+
+@pytest.fixture
+def model_route(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Load the pure router and prevent argparse locale filesystem lookups."""
+    module = load_script(repo_root, "model_route")
+    monkeypatch.setattr(module.argparse, "_", lambda message: message)
+    return module

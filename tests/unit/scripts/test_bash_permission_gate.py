@@ -4,6 +4,8 @@ from types import ModuleType
 
 import pytest
 
+from tests.helpers.permission_cases import HOOK_BYPASS_CASES
+
 
 @pytest.mark.parametrize(
     "command",
@@ -181,3 +183,35 @@ def test_reviewer_bypass_prompts_and_retains_head_parts_or_sentinel(
     assert parts == head_parts or sentinel in parts
     if sentinel_only:
         assert pending == [sentinel]
+
+
+@pytest.mark.parametrize(
+    ("command", "guarded"),
+    HOOK_BYPASS_CASES,
+)
+def test_hook_bypass_guard_precedes_commit_allowance(
+    permission_gate: ModuleType,
+    command: str,
+    guarded: bool,
+) -> None:
+    """Hook bypasses require permission even when ordinary local commits are allowed."""
+    ledger = {
+        "allow_keys": {"git commit": "local", "git status": "local", "echo": "output"},
+        "ask_patterns": [
+            {"pattern": r"^git\b[^&|;\n]*(--no-verify|core\.hooksPath)", "note": "hooks"}
+        ],
+        "grants": [],
+    }
+    assert permission_gate.ask_match(command, ledger) == ("hooks" if guarded else None)
+    if not guarded:
+        assert permission_gate.unallowed_parts(command, ledger) == []
+
+
+@pytest.mark.parametrize(("depth", "allowed"), [(5, True), (6, False), (1000, False)])
+def test_wrapper_depth_limit_fails_closed(
+    permission_gate: ModuleType, depth: int, allowed: bool
+) -> None:
+    """Readable wrappers preserve permission; excessive nesting must still prompt."""
+    command = "env " * depth + "git commit -m x"
+    ledger = {"allow_keys": {"git commit": "local"}, "grants": []}
+    assert (permission_gate.unallowed_parts(command, ledger) == []) is allowed

@@ -12,7 +12,8 @@ scripts.
 
 What KASPER *is* lives under `.claude/`: the `/kasper` skill in `.claude/skills/kasper/`,
 the agent definitions in `.claude/agents/` (one file per discipline — edit one and the
-next delegation uses it; its frontmatter pins that agent's model and tools), the Codex seat
+next delegation uses it; its frontmatter names that agent's tools, while the model tier is
+scored per spawn by `.claude/scripts/model_route.py` rather than pinned in the file), the Codex seat
 prompts in `.claude/codex/` (with one per-stack section in `.claude/codex/stacks/`, appended to a
 seat's prompt by `--stack`), the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and

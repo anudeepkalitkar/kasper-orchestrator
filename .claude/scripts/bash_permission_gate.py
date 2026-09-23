@@ -7,7 +7,9 @@ ledger (``.claude/permissions-ledger.json`` — the single source of truth: seed
 patterns, recorded user grants and denials, each with a note). Decision:
 
   * ask-pattern / denial hit -> ``permissionDecision: ask`` with the ledger note as the reason, so
-    destructive / outward-facing / previously-denied operations always get a human look.
+    destructive / outward-facing / previously-denied operations always get a human look. The
+    patterns run against the raw command AND against every decomposed part in the normalized
+    form the allow check judges, so quoting or restructuring cannot slip past a guard.
   * every part allowed       -> ``permissionDecision: allow``. The command is decomposed first:
     sequencing (``&&  ||  ;``), pipelines (``|  |&``), background ``&``, newlines,
     subshell parens, ``$(...)``/backtick substitutions (recursively), env-var prefixes
@@ -92,6 +94,7 @@ _WRAPPERS: frozenset[str] = frozenset(
     {"xargs", "timeout", "nohup", "env", "command", "time", "nice"}
 )
 _ENV_ASSIGN: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_MAX_UNWRAP_DEPTH: int = 5  # nested wrappers (``env nice timeout 5 cmd``) peeled before giving up
 _SUB_TOKEN: str = "__SUB__"  # placeholder left where a $(...)/backtick substitution was extracted
 # Stand-in part for a substitution body the gate refuses to read (see _is_opaque): it matches no
 # allow key, and the leading underscores make it unpromotable by the recorder, so a command
@@ -120,13 +123,21 @@ def ledger_allow_keys(ledger: dict[str, Any]) -> list[str]:
 
 
 def ask_match(command: str, ledger: dict[str, Any]) -> str | None:
-    """Return the note of the first ask-pattern/denial matching the raw command, else None."""
+    """Return the note of the first ask-pattern/denial the command trips, else None.
+
+    Each ``ask_patterns``/``denials`` regex is applied with ``re.search`` (so a ``^`` anchors a
+    part's head) to two views of the command: the raw string, so a guarded token anywhere — a
+    heredoc body, a comment — still prompts; and every decomposed part in the normalized form
+    the allow check judges (``_normalized_parts``), so what the ledger allows and what it guards
+    are read from the same text. A match on either view is an ask; a malformed regex is skipped.
+    """
+    views = [command, *_normalized_parts(command)]
     for entry in list(ledger.get("ask_patterns") or []) + list(ledger.get("denials") or []):
         pattern = entry.get("pattern") if isinstance(entry, dict) else None
         if not pattern:
             continue
         try:
-            if re.search(pattern, command):
+            if any(re.search(pattern, view) for view in views):
                 return str(entry.get("note") or "matched a guarded pattern")
         except re.error:
             continue
@@ -326,30 +337,44 @@ def _strip_tokens(tokens: list[str]) -> list[str]:
     return tokens
 
 
-def _tokens_allowed(tokens: list[str], keys: list[str], depth: int = 0) -> bool:
-    """True when the (stripped) token list starts with an allowed key, is scaffolding, or
-    unwraps to one.
+def _unwrap_tokens(tokens: list[str], depth: int = 0) -> list[str] | None:
+    """Reduce a segment's tokens to the command the allow check judges.
+
+    Drops leading scaffolding and env-var assignments, reduces a path head to its basename
+    (``_strip_tokens``), and peels wrapper commands (``xargs``/``timeout``/``env``/...) down to
+    their argument, re-stripping after each. Returns None when wrappers nest deeper than
+    ``_MAX_UNWRAP_DEPTH`` — unreadable, so the caller must not allow it.
     """
-    if depth > 5:
-        return False
+    if depth > _MAX_UNWRAP_DEPTH:
+        return None
     tokens = _strip_tokens(tokens)
-    if not tokens:
+    if not tokens or tokens[0] not in _WRAPPERS:
+        return tokens
+    head, rest = tokens[0], tokens[1:]
+    while rest and rest[0].startswith("-"):
+        rest = rest[1:]
+    if head == "timeout" and rest:
+        rest = rest[1:]  # skip the duration argument
+    return _unwrap_tokens(rest, depth + 1)
+
+
+def _tokens_allowed(tokens: list[str], keys: list[str]) -> bool:
+    """True when the normalized token list (``_unwrap_tokens``) is pure scaffolding, a
+    declaration/substitution placeholder, a harmless builtin, or starts with an allowed key.
+    """
+    unwrapped = _unwrap_tokens(tokens)
+    if unwrapped is None:
+        return False  # wrapped past reading — never allow what cannot be classified
+    if not unwrapped:
         return True  # pure scaffolding / bare env assignment
-    head = tokens[0]
+    head = unwrapped[0]
     if head in _OPENERS or head == _SUB_TOKEN:
         return True  # declaration or extracted substitution (classified separately)
     if head in _BUILTINS:
         return True  # harmless shell builtin — runs no external program
-    if head in _WRAPPERS:
-        rest = tokens[1:]
-        while rest and rest[0].startswith("-"):
-            rest = rest[1:]
-        if head == "timeout" and rest:
-            rest = rest[1:]  # skip the duration argument
-        return _tokens_allowed(rest, keys, depth + 1)
     effective: list[str] = []  # key match ignores flag tokens (and -C's path argument)
     skip_next = False
-    for token in tokens:
+    for token in unwrapped:
         if skip_next:
             skip_next = False
             continue
@@ -379,14 +404,20 @@ def _segment_allowed(segment: str, keys: list[str], patterns: list[dict[str, Any
                 return True
         except re.error:
             continue
-    # Quote-aware tokenization: 'X="a b"' is ONE env-assign token, never a stray 'b"' head;
-    # comments=True makes a '# ...' segment pure scaffolding. Unbalanced quotes fall back to the
-    # old naive split, which at worst prompts — never silently allows more.
+    return _tokens_allowed(_segment_tokens(text), keys)
+
+
+def _segment_tokens(text: str) -> list[str]:
+    """Quote-aware tokenization of one segment, shared by the allow and ask checks.
+
+    ``'X="a b"'`` is ONE env-assign token, never a stray ``b"`` head; ``comments=True`` makes a
+    ``# ...`` segment pure scaffolding. Unbalanced quotes fall back to a naive whitespace split,
+    which at worst prompts — never silently allows more.
+    """
     try:
-        tokens = shlex.split(text, comments=True, posix=True)
+        return shlex.split(text, comments=True, posix=True)
     except ValueError:
-        tokens = text.split()
-    return _tokens_allowed(tokens, keys)
+        return text.split()
 
 
 def command_parts(command: str) -> list[str]:
@@ -399,6 +430,24 @@ def command_parts(command: str) -> list[str]:
     for inner in inners:
         parts.extend(command_parts(inner))
     return parts
+
+
+def _normalized_parts(command: str) -> list[str]:
+    """Every classifiable part as the allow check judges it: quotes resolved, scaffolding, env
+    prefixes and wrappers stripped, the path head reduced, tokens joined by single spaces.
+
+    Parts wrapped past reading (``_unwrap_tokens`` -> None) are omitted — the allow check
+    refuses them anyway, so the command prompts regardless.
+    """
+    # why: a raw-only ask check missed ``git commit --no-""verify`` — Bash drops the empty
+    # quotes, so the flag the ledger guards only exists in the unquoted tokens the allow check
+    # was already auto-allowing.
+    normalized: list[str] = []
+    for part in command_parts(command):
+        tokens = _unwrap_tokens(_segment_tokens(part))
+        if tokens:
+            normalized.append(" ".join(tokens))
+    return normalized
 
 
 def unallowed_parts(command: str, ledger: dict[str, Any]) -> list[str]:

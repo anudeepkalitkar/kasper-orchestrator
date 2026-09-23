@@ -7,7 +7,7 @@ import pytest
 from tests.conftest import REPO_ROOT
 
 AGENT_FILES = sorted((REPO_ROOT / ".claude" / "agents").glob("*.md"))
-REQUIRED_FIELDS = {"name", "description", "tools", "model"}
+REQUIRED_FIELDS = {"name", "description", "tools"}
 
 
 @pytest.mark.parametrize("agent_file", AGENT_FILES, ids=lambda path: path.stem)
@@ -28,3 +28,10 @@ def test_agent_starts_with_required_frontmatter_matching_filename(agent_file: Pa
                 f"{agent_file.name}: {key} contains an unquoted YAML mapping separator"
             )
     assert fields["name"].strip().strip("\"'") == agent_file.stem
+
+
+@pytest.mark.parametrize("agent_file", AGENT_FILES, ids=lambda path: path.stem)
+def test_agent_has_no_model_pin(agent_file: Path) -> None:
+    """Every spawn routes its own model; no agent file may pin a tier."""
+    lines = agent_file.read_text(encoding="utf-8").splitlines()
+    assert not any(line.lstrip().startswith("model:") for line in lines)

@@ -43,12 +43,16 @@ around a prompt.
 7. [documentation](.claude/rules/documentation.md) — durable docs in `docs/`, committed;
    living task docs in `tasks/` are local-only, never committed; append-only ADRs in
    `docs/adr/` are committed in a private repo, local-only in a public one; drift is a defect.
+8. [model-routing](.claude/rules/model-routing.md) — the model tier is scored from each
+   brief at spawn time and passed as the Agent tool's `model`; agent files pin no model,
+   and a spawn that passes none inherits the session's own — the most expensive.
 
 ## KASPER — one session, eight agents and three Codex seats
 
 `/kasper` ([skills/kasper/SKILL.md](.claude/skills/kasper/SKILL.md)) turns the session it
 is typed in into the project's KASPER. It raises nothing: the eight Claude disciplines are
-**subagents of that session**, spawned per task with the Agent tool; the three verification
+**subagents of that session**, spawned per task with the Agent tool — each at the model tier
+`model_route.py` scores from its brief, since no agent file pins one; the three verification
 seats are Bash calls into the OpenAI Codex CLI, not agents. Chain law: human → KASPER →
 agents, one hop. Agents cannot spawn agents, cannot message each other, and cannot ask the
 human anything — an agent that hits a fork stops and reports it; KASPER asks and resumes
@@ -125,8 +129,9 @@ Every hook command runs through one dispatcher —
   `notify.wav` as the fallback).
 - Command helpers: [git_checkpoint.py](.claude/scripts/git_checkpoint.py) (backs
   `/checkpoint`) · [new_task.py](.claude/scripts/new_task.py) (backs `/new-task`). Beside them,
-  [codex_seat.py](.claude/scripts/codex_seat.py) runs a Codex verification seat — KASPER calls it
-  directly; it is not a hook.
+  [codex_seat.py](.claude/scripts/codex_seat.py) runs a Codex verification seat and
+  [model_route.py](.claude/scripts/model_route.py) picks the model tier for one spawn (it backs
+  the routing step) — KASPER calls both directly; neither is a hook.
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
   shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
   never those.

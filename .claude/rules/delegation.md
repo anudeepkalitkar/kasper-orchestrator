@@ -42,6 +42,8 @@ cross-discipline routes back through KASPER.
 4. **Brief completely, then budget.** Every brief carries the facts the agent needs, the exact
    files to read, and a tool-call budget — context is re-read on every turn, so a fresh,
    well-briefed agent costs less than a long-lived one that has to go looking.
+5. **Every spawn carries the tier the router printed** for that brief — no agent file pins a
+   model, and a spawn that passes none inherits the session's own ([[model-routing]]).
 
 ## Parallelize independent work (fan out, then integrate)
 - Before any multi-part task ask: which pieces are independent? **Batch those agent calls in a

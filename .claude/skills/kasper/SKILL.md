@@ -25,7 +25,12 @@ once per task, the third on a design before it is built.
    scope rules that apply (production only, tests only, docs only) — the agent definition
    carries the discipline, your brief carries the task. **Name the exact files to read and a
    tool-call budget** (default 25; verification-only 10): an agent that has to go looking
-   pays for the search in re-read context. **The three verification seats are not
+   pays for the search in re-read context. **Route the model before every spawn:** score the
+   brief you just wrote with `python3 .claude/scripts/model_route.py --agent <name> --brief
+   <file>` (or pipe it on stdin) and pass the tier it prints as the Agent tool's `model` — a
+   spawn without one inherits your own model, the most expensive in play. Spawning at a
+   different tier is allowed with a one-line reason in the task doc; the rubric is
+   `.claude/rules/model-routing.md`. **The three verification seats are not
    Agent calls:** write their brief to a file under the session scratch dir and run
    `python3 .claude/scripts/codex_seat.py tester|reviewer|arch-reviewer --brief <brief> --out
    <report> [--stack <name>...]`, then read the report it names. **Pass `--stack` for every stack

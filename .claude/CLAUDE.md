@@ -45,11 +45,11 @@ around a prompt.
    living task docs in `tasks/` are local-only, never committed; append-only ADRs in
    `docs/adr/` are committed in a private repo, local-only in a public one; drift is a defect.
 
-## KASPER — one session, seven agents and two Codex seats
+## KASPER — one session, eight agents and three Codex seats
 
 `/kasper` ([skills/kasper/SKILL.md](skills/kasper/SKILL.md)) turns the session it
-is typed in into the project's KASPER. It raises nothing: the seven Claude disciplines are
-**subagents of that session**, spawned per task with the Agent tool; the two verification
+is typed in into the project's KASPER. It raises nothing: the eight Claude disciplines are
+**subagents of that session**, spawned per task with the Agent tool; the three verification
 seats are Bash calls into the OpenAI Codex CLI, not agents. Chain law: human → KASPER →
 agents, one hop. Agents cannot spawn agents, cannot message each other, and cannot ask the
 human anything — an agent that hits a fork stops and reports it; KASPER asks and resumes
@@ -57,7 +57,7 @@ that same agent with the answer. Permission prompts, an agent's included, surfac
 in KASPER's session and the human answers them there.
 
 The roster ([agents/](agents/)) — four developers, each of which never touches
-`tests/` and never commits, plus three supporting disciplines:
+`tests/` and never commits, plus four supporting disciplines:
 [python-developer](agents/python-developer.md) (Python, carrying FastAPI,
 SQLAlchemy 2 + Alembic, Celery, PyTorch/OCR and boto3 as sections) ·
 [typescript-developer](agents/typescript-developer.md) (TypeScript — Node
@@ -66,18 +66,23 @@ servers, React 19 + Vite, Next 16) ·
 plans and reports, never applies) ·
 [devops-developer](agents/devops-developer.md) (Dockerfiles, compose, GitHub
 Actions, shell — builds locally, never pushes an image or deploys) ·
+[architect](agents/architect.md) (turns a goal into a design spec in
+`docs/design/` and a proposed ADR; docs only, never code or tests) ·
 [documentor](agents/documentor.md) (owns the written truth; docs
 only) · [git-workflow](agents/git-workflow.md) (the only committer; merges
 human-approved always; structurally `Write`/`Edit`-less) ·
 [researcher](agents/researcher.md) (external facts, reads only).
 
-Verification is not a subagent. The **tester** and **code-reviewer** are seats on the OpenAI
-Codex CLI, run headless by one ledger-gated Bash call —
-`python3 .claude/scripts/codex_seat.py tester|reviewer --brief <file> --out <file>`
-([codex_seat.py](scripts/codex_seat.py)) — whose prompt is the seat's role file in
-[codex/](codex/) plus the brief KASPER wrote. **One verify pass per task, not per
-subtask:** the developer implements the task, the tester seat authors the tests and runs the
-gate, the reviewer seat judges the diff. The tester's report opens `GATE: green` or
+Verification is not a subagent. The **tester**, **code-reviewer**, and **arch-reviewer** are
+seats on the OpenAI Codex CLI, run headless by one ledger-gated Bash call —
+`python3 .claude/scripts/codex_seat.py tester|reviewer|arch-reviewer --brief <file> --out <file>
+[--stack <name>...]` ([codex_seat.py](scripts/codex_seat.py)) — whose prompt is the seat's
+role file in [codex/](codex/), then one stack section from [codex/stacks/](codex/stacks/)
+per `--stack` the call names — which is what makes a seat language-aware — then the brief
+KASPER wrote. **One verify pass per task, not per subtask:**
+the developer implements the task, the tester seat authors the tests and runs the
+gate, the reviewer seat judges the diff; the arch-reviewer seat judges a design spec or a proposed
+ADR before any of it is built. The tester's report opens `GATE: green` or
 `GATE: red`; the script exits 0 green · 1 red · 2 bad arguments · 3 Codex not signed in (the
 human runs `codex login`) · 4 timeout · 5 no verdict. Owner ≠ verifier now also means
 vendor ≠ vendor.

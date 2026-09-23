@@ -3,7 +3,9 @@
 **Work in short-lived feature branches; checkpoint per subtask; PR per task into `development`;
 verify locally — no CI. Never commit directly to a shared branch.** (The `development → qa → main`
 promotion pipeline and GitHub Actions CI are both retired — decided 2026-07-10; repos still
-carrying them migrate when next touched.)
+carrying them migrate when next touched. Amended 2026-09-23: **test and lint** CI stays retired
+because local verification is the gate, but workflows that build and push images or run deploys
+are allowed — they are explicit human-triggered or merge-triggered ship steps, not verification.)
 
 ```
 feature/* | fix/*  ──PR──▶  development  (the only shared branch; protected, default)
@@ -68,8 +70,10 @@ branch promotion and not an automated pipeline.
 ## Scope
 This rule governs **project repos**. New repos: single `development` branch, protected (review +
 no direct push — no required status checks, since there is no CI), set as default; no
-`.github/workflows/`. Repos still carrying the retired promotion structure or CI workflows keep
-working but drop them the next time the repo's meta is touched. This repo
+`.github/workflows/`. Repos still carrying the retired promotion structure or test/lint CI workflows
+keep working but drop them the next time the repo's meta is touched — that drop covers test and
+lint workflows only (amended 2026-09-23); image-push and deploy workflows are allowed and stay,
+because they ship rather than verify. This repo
 (**kasper-orchestrator**) carries
 the workflow config itself and is versioned like any project repo — a remote, a protected
 mainline, feature branch + PR per task; there is no separate config repo in this setup —

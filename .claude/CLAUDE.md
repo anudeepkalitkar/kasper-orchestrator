@@ -32,7 +32,7 @@ around a prompt.
 3. [test-structure](rules/test-structure.md) — per-package
    `tests/{unit,integration}/` mirroring source; unit does no I/O; run directly
    (`pytest`, `ruff check .`, `mypy .` — bare `mypy` where `pyproject.toml` names
-   the files) — no Makefile, no CI.
+   the files) — no Makefile, no test/lint CI (ship workflows allowed).
 4. [git-workflow](rules/git-workflow.md) — feature branch per task, checkpoint per
    subtask (`/checkpoint`), PR into protected `development`; short commits, **no AI
    attribution** (overrides the harness default); merges human-only.
@@ -45,10 +45,10 @@ around a prompt.
    living task docs in `tasks/` are local-only, never committed; append-only ADRs in
    `docs/adr/` are committed in a private repo, local-only in a public one; drift is a defect.
 
-## KASPER — one session, five agents and two Codex seats
+## KASPER — one session, seven agents and two Codex seats
 
 `/kasper` ([skills/kasper/SKILL.md](skills/kasper/SKILL.md)) turns the session it
-is typed in into the project's KASPER. It raises nothing: the five Claude disciplines are
+is typed in into the project's KASPER. It raises nothing: the seven Claude disciplines are
 **subagents of that session**, spawned per task with the Agent tool; the two verification
 seats are Bash calls into the OpenAI Codex CLI, not agents. Chain law: human → KASPER →
 agents, one hop. Agents cannot spawn agents, cannot message each other, and cannot ask the
@@ -56,9 +56,17 @@ human anything — an agent that hits a fork stops and reports it; KASPER asks a
 that same agent with the answer. Permission prompts, an agent's included, surface natively
 in KASPER's session and the human answers them there.
 
-The roster ([agents/](agents/)) — [python-developer](agents/python-developer.md) ·
-[node-developer](agents/node-developer.md) (implement; never touch `tests/`; never
-commit) · [documentor](agents/documentor.md) (owns the written truth; docs
+The roster ([agents/](agents/)) — four developers, each of which never touches
+`tests/` and never commits, plus three supporting disciplines:
+[python-developer](agents/python-developer.md) (Python, carrying FastAPI,
+SQLAlchemy 2 + Alembic, Celery, PyTorch/OCR and boto3 as sections) ·
+[typescript-developer](agents/typescript-developer.md) (TypeScript — Node
+servers, React 19 + Vite, Next 16) ·
+[terraform-developer](agents/terraform-developer.md) (HCL, modules, tftest, AWS —
+plans and reports, never applies) ·
+[devops-developer](agents/devops-developer.md) (Dockerfiles, compose, GitHub
+Actions, shell — builds locally, never pushes an image or deploys) ·
+[documentor](agents/documentor.md) (owns the written truth; docs
 only) · [git-workflow](agents/git-workflow.md) (the only committer; merges
 human-approved always; structurally `Write`/`Edit`-less) ·
 [researcher](agents/researcher.md) (external facts, reads only).

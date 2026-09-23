@@ -3,7 +3,8 @@
 **K**alitkar **A**utonomous **S**ystem for **P**rogramming, **E**ngineering & **R**easoning.
 
 One Claude Code session that runs your project: you talk to it, it delegates the real work
-to discipline **subagents** — developer, documentor, git-workflow, researcher — and, once per
+to discipline **subagents** — four developers (Python, TypeScript, Terraform, DevOps),
+documentor, git-workflow, researcher — and, once per
 task, to two verification seats that run on the OpenAI Codex CLI — tester and code-reviewer —
 and keeps the task doc while they work. Claude Code is the mechanism; KASPER is a skill, a set
 of agent definitions, standing rules, and a few hook scripts.
@@ -14,8 +15,11 @@ next delegation uses it; its frontmatter pins that agent's model and tools), the
 prompts in `.claude/codex/`, the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and
 the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). That, the
-installer (`install.py`) with its `tests/` and `pyproject.toml`, this README and `CLAUDE.md`
-are what this repo holds today. There is no `docs/adr/` or `tasks/` here: under KASPER task docs
+installer (`install.py`) with its `tests/` and `pyproject.toml`, `docs/licenses/`, this README
+and `CLAUDE.md` are what this repo holds today. Parts of the agent prompts — the framework
+method inside `python-developer` and `typescript-developer` — are adapted from
+[affaan-m/ECC](https://github.com/affaan-m/ECC) under the MIT licence, kept at
+`docs/licenses/ECC-LICENSE`. There is no `docs/adr/` or `tasks/` here: under KASPER task docs
 are local working files in every repo, and so are decision records in a public repo like this one
 — the SessionStart hook keeps them out of git through each repo's own `.git/info/exclude`, never a
 shared `.gitignore` — so they stay on the machine that wrote them and out of everyone else's

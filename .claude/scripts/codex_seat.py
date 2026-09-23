@@ -57,6 +57,9 @@ from typing import Literal
 
 Seat = Literal["tester", "reviewer", "arch-reviewer"]
 
+#: Codex config override on every seat: no sub-threads, so a seat stays one hop (chain law).
+NO_SUBAGENTS: tuple[str, ...] = ("-c", "features.multi_agent=false")
+
 #: The seats in the order ``--help`` lists them; must match :data:`Seat`.
 SEATS: tuple[Seat, ...] = ("tester", "reviewer", "arch-reviewer")
 
@@ -147,6 +150,8 @@ def codex_argv(seat: Seat, out: Path, prompt: str) -> list[str]:
     writes caches); the reviewer runs ``codex exec review`` in its free-text form,
     which is the only shape that accepts our rules as a prompt; the arch-reviewer
     judges a design document, not a diff, so it runs plain ``codex exec`` read-only.
+    Every form pins ``features.multi_agent=false`` so a seat can never spawn Codex
+    sub-threads — chain law is one hop.
 
     Args:
         seat: The seat being run.
@@ -157,10 +162,19 @@ def codex_argv(seat: Seat, out: Path, prompt: str) -> list[str]:
         The argv list, prompt last.
     """
     if seat == "tester":
-        return ["codex", "exec", "--sandbox", "workspace-write", "-o", str(out), prompt]
+        return [
+            "codex",
+            "exec",
+            *NO_SUBAGENTS,
+            "--sandbox",
+            "workspace-write",
+            "-o",
+            str(out),
+            prompt,
+        ]
     if seat == "arch-reviewer":
-        return ["codex", "exec", "--sandbox", "read-only", "-o", str(out), prompt]
-    return ["codex", "exec", "review", "-o", str(out), prompt]
+        return ["codex", "exec", *NO_SUBAGENTS, "--sandbox", "read-only", "-o", str(out), prompt]
+    return ["codex", "exec", "review", *NO_SUBAGENTS, "-o", str(out), prompt]
 
 
 def is_logged_in() -> bool:

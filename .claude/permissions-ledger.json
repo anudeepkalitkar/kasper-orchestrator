@@ -135,8 +135,8 @@
   },
   "allow_patterns": [
     {
-      "pattern": "\\bgit\\s+push\\b.*\\b(feat|fix|feature)/",
-      "note": "feature-branch push — standing exception per git-workflow/boundaries"
+      "pattern": "\\bgit\\s+push\\b.*\\b(feat|fix|feature|docs|chore|refactor|test)/",
+      "note": "feature-branch push (feat/fix/feature/docs/chore/refactor/test) — standing exception per git-workflow/boundaries"
     }
   ],
   "ask_patterns": [

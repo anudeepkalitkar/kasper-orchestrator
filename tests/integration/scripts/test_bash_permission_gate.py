@@ -6,20 +6,20 @@ from pathlib import Path
 import pytest
 
 from tests.helpers.hooks import run_script
-from tests.helpers.permission_cases import HOOK_BYPASS_CASES
+from tests.helpers.permission_cases import FEATURE_PUSH_CASES, HOOK_BYPASS_CASES
 
 
 @pytest.mark.parametrize(
     ("command", "guarded"),
-    HOOK_BYPASS_CASES,
+    HOOK_BYPASS_CASES + [(command, not allowed) for command, allowed in FEATURE_PUSH_CASES],
 )
-def test_seed_ledger_guards_hook_bypasses(
+def test_seed_ledger_guards_hook_bypasses_and_scopes_pushes(
     repo_root: Path,
     tmp_path: Path,
     command: str,
     guarded: bool,
 ) -> None:
-    """The shipped policy asks for bypasses and preserves ordinary commit permission."""
+    """The shipped policy guards bypasses and shared branches, allowing feature pushes."""
     config = tmp_path / ".claude"
     config.mkdir()
     (config / "permissions-ledger.json").write_text(

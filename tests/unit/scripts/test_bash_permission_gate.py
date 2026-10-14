@@ -4,7 +4,7 @@ from types import ModuleType
 
 import pytest
 
-from tests.helpers.permission_cases import HOOK_BYPASS_CASES
+from tests.helpers.permission_cases import FEATURE_PUSH_CASES, HOOK_BYPASS_CASES
 
 
 @pytest.mark.parametrize(
@@ -215,3 +215,16 @@ def test_wrapper_depth_limit_fails_closed(
     command = "env " * depth + "git commit -m x"
     ledger = {"allow_keys": {"git commit": "local"}, "grants": []}
     assert (permission_gate.unallowed_parts(command, ledger) == []) is allowed
+
+
+@pytest.mark.parametrize(("command", "allowed"), FEATURE_PUSH_CASES)
+def test_feature_push_allow_pattern(
+    permission_gate: ModuleType, command: str, allowed: bool
+) -> None:
+    """Feature prefixes are allowed while development and master still need permission."""
+    ledger = {
+        "allow_patterns": [
+            {"pattern": r"\bgit\s+push\b.*\b(feat|fix|feature|docs|chore|refactor|test)/"}
+        ],
+    }
+    assert permission_gate.unallowed_parts(command, ledger) == ([] if allowed else [command])

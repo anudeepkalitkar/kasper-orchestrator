@@ -127,7 +127,7 @@ RISK_CAP = 6
 #: (floor, ceiling) per agent; an agent not listed gets ``DEFAULT_BOUNDS``.
 DEFAULT_BOUNDS: tuple[Tier, Tier] = ("haiku", "fable")
 AGENT_BOUNDS: dict[str, tuple[Tier, Tier]] = {
-    "architect": ("opus", "fable"),
+    "architect": ("fable", "fable"),
     "git-workflow": ("haiku", "sonnet"),
     "researcher": ("haiku", "sonnet"),
 }

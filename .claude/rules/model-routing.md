@@ -28,7 +28,7 @@ printed; exit 2 means bad arguments or an unreadable brief.
 | **ambiguity** | investigate, debug, root cause, unclear, decide, choose, options, why does, intermittent, flaky | +1 each, capped at 3 |
 | **risk** | migration, auth, security, concurrency, race, async, crypto, payment, delete, data loss, production, terraform, infra, permission, ledger | +2 each, capped at 6 |
 | **total → tier** (total is floored at 0) | ≤ 1 · ≤ 5 · ≤ 11 · above 11 | haiku · sonnet · opus · fable |
-| **bounds** — `architect` | floor opus, ceiling fable | tier raised to opus if lower |
+| **bounds** — `architect` | floor fable, ceiling fable | always fable |
 | **bounds** — `git-workflow`, `researcher` | floor haiku, ceiling sonnet | tier lowered to sonnet if higher |
 | **bounds** — every other agent | floor haiku, ceiling fable | unchanged |
 

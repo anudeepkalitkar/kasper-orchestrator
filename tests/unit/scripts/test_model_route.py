@@ -139,7 +139,7 @@ def test_tier_boundaries(model_route: ModuleType, total: int, tier: str) -> None
 @pytest.mark.parametrize(
     ("agent", "expected"),
     [
-        ("architect", ("opus", "opus", "opus", "fable")),
+        ("architect", ("fable", "fable", "fable", "fable")),
         ("git-workflow", ("haiku", "sonnet", "sonnet", "sonnet")),
         ("researcher", ("haiku", "sonnet", "sonnet", "sonnet")),
         ("unknown-agent", ("haiku", "sonnet", "opus", "fable")),
@@ -177,10 +177,10 @@ def test_cli_stdin_output_channels(
     argv = ["--agent", "architect"] + (["--explain"] if explain else [])
     assert model_route.main(argv) == 0
     captured = capsys.readouterr()
-    assert captured.out == "opus\n"
+    assert captured.out == "fable\n"
     assert captured.err == (
         "size: 0\nnovelty: -1\nambiguity: 0\nrisk: 0\n"
-        "total: 0 -> haiku\nbounds: architect [opus, fable] -> opus\n"
+        "total: 0 -> haiku\nbounds: architect [fable, fable] -> fable\n"
         if explain
         else ""
     )

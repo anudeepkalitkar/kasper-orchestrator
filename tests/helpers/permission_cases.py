@@ -15,3 +15,16 @@ HOOK_BYPASS_CASES: list[tuple[str, bool]] = [
     ('echo ready; git commit --no-""verify -m x', True),
     ('echo ready\ngit commit --no-""verify -m x', True),
 ]
+
+
+FEATURE_PUSH_CASES: list[tuple[str, bool]] = [
+    ("git push -u origin docs/x", True),
+    ("git push -u origin chore/release-v19", True),
+    ("git push origin refactor/y", True),
+    ("git push origin test/z", True),
+    ("git push -u origin feat/x", True),
+    ("git push -u origin fix/x", True),
+    ("git push -u origin feature/x", True),
+    ("git push origin development", False),
+    ("git push origin master", False),
+]

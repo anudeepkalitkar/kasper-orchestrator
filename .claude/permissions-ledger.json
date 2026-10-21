@@ -1,5 +1,5 @@
 {
-  "_doc": "Permission ledger — single source of truth for what Bash may auto-run. Read by .claude/scripts/bash_permission_gate.py (PreToolUse) and appended to by .claude/scripts/permission_recorder.py (PostToolUse) when the user grants a prompt. allow_keys: token-prefix -> note. allow_patterns: regex allowed at segment level. ask_patterns + denials: regex that always forces a human prompt. grants: auto-recorded user approvals — empty on a fresh clone; this ledger carries only the portable seeds, and per-machine grants accrue locally as you approve prompts.",
+  "_doc": "Permission ledger — single source of truth for what Bash may auto-run. Read by .claude/scripts/bash_permission_gate.py (PreToolUse) and appended to by .claude/scripts/permission_recorder.py (PostToolUse) when the user grants a prompt. allow_keys: token-prefix -> note. allow_patterns: regex allowed at segment level. ask_words: word rules {tool, all: [[word, ...], ...], note} — a command part whose resolved head is tool asks when every group has a word among its later non-flag tokens (a word ending '-' matches as a prefix; an empty all guards the tool itself); option values are never skipped, so they cannot hide a guarded word. ask_patterns + denials: regex that always forces a human prompt. Both guard layers run on every command — ask_words on the resolved tokens, ask_patterns on the raw text and the normalized parts (catching payloads such as python3 -c or heredoc bodies) — and a hit on either always wins over every allow_key, allow_pattern and grant. grants: auto-recorded user approvals — empty on a fresh clone; this ledger carries only the portable seeds, and per-machine grants accrue locally as you approve prompts.",
   "allow_keys": {
     "cd": "navigation",
     "ls": "read-only",
@@ -201,8 +201,8 @@
       "note": "dd to a device — confirm"
     },
     {
-      "pattern": "\\bterraform\\s+(apply|destroy)\\b",
-      "note": "cloud mutation, costs money — confirm (boundaries)"
+      "pattern": "\\bterraform\\s+(?:-\\S+\\s+)*(apply|destroy|import|state)\\b",
+      "note": "cloud or state mutation, costs money — confirm (boundaries)"
     },
     {
       "pattern": "\\baws\\s+[\\w-]+\\s+(delete|terminate|create|update|put|deploy|run|start|stop|reboot|modify|register|deregister|invoke|cp|sync|mb|rb)[\\w-]*\\b",
@@ -217,8 +217,105 @@
       "note": "drops volumes/data — confirm"
     },
     {
+      "pattern": "\\baws\\s(?:.*\\s)?(?:(?:rm|rb)\\b|(?:delete|remove|terminate|change|rotate|put|update|create|modify)-)",
+      "note": "AWS delete/change/rotate (global flags allowed before the service) — confirm (boundaries)"
+    },
+    {
+      "pattern": "\\bdocker\\b.*\\b(push|login)\\b",
+      "note": "publishes an image or stores registry credentials — human only (boundaries)"
+    },
+    {
+      "pattern": "\\bgh\\s+(variable|secret)\\s+(?:\\S+\\s+)*?(set|delete|remove)\\b",
+      "note": "mutates repo variables/secrets (flags may sit between noun and verb) — network write, confirm (boundaries)"
+    },
+    {
+      "pattern": "\\bgit\\s+(?:-[Cc]\\s+\\S+\\s+|--?[\\w-]+(?:=\\S+)?\\s+)*merge(?![\\w-])",
+      "note": "merges stay human (git-workflow)"
+    },
+    {
+      "pattern": "\\bgit\\s+(?:-[Cc]\\s+\\S+\\s+|--?[\\w-]+(?:=\\S+)?\\s+)*clean(?![\\w-])",
+      "note": "deletes untracked files (any flags) — confirm"
+    },
+    {
+      "pattern": "\\bdropdb\\b",
+      "note": "drops a database — data loss, always confirm"
+    },
+    {
       "pattern": ":\\(\\)\\s*\\{[^}]*\\}\\s*;",
       "note": "fork bomb"
+    }
+  ],
+  "ask_words": [
+    {
+      "tool": "git",
+      "all": [
+        [
+          "merge",
+          "clean"
+        ]
+      ],
+      "note": "merge stays human (git-workflow); clean deletes untracked files — confirm"
+    },
+    {
+      "tool": "gh",
+      "all": [
+        [
+          "variable",
+          "secret"
+        ],
+        [
+          "set",
+          "delete",
+          "remove"
+        ]
+      ],
+      "note": "mutates repo variables/secrets — network write, confirm (boundaries)"
+    },
+    {
+      "tool": "docker",
+      "all": [
+        [
+          "push",
+          "login"
+        ]
+      ],
+      "note": "publishes an image or stores registry credentials — human only (boundaries)"
+    },
+    {
+      "tool": "dropdb",
+      "all": [],
+      "note": "drops a database — data loss, always confirm"
+    },
+    {
+      "tool": "terraform",
+      "all": [
+        [
+          "apply",
+          "destroy",
+          "import",
+          "state"
+        ]
+      ],
+      "note": "cloud or state mutation, costs money — confirm (boundaries)"
+    },
+    {
+      "tool": "aws",
+      "all": [
+        [
+          "rm",
+          "rb",
+          "delete-",
+          "remove-",
+          "terminate-",
+          "change-",
+          "rotate-",
+          "put-",
+          "update-",
+          "create-",
+          "modify-"
+        ]
+      ],
+      "note": "AWS delete/change/rotate — costs money or loses data, confirm (boundaries)"
     }
   ],
   "grants": [

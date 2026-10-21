@@ -10,6 +10,10 @@ patterns, recorded user grants and denials, each with a note). Decision:
     destructive / outward-facing / previously-denied operations always get a human look. The
     patterns run against the raw command AND against every decomposed part in the normalized
     form the allow check judges, so quoting or restructuring cannot slip past a guard.
+  * ask-words hit            -> ``ask`` too. A word rule names a tool and groups of guarded
+    words: a part whose resolved head is that tool asks when every group has a match among
+    its later non-flag tokens. No option grammar is modelled, so an option's value is just one
+    more token — it can never hide the guarded word (fail closed).
   * every part allowed       -> ``permissionDecision: allow``. The command is decomposed first:
     sequencing (``&&  ||  ;``), pipelines (``|  |&``), background ``&``, newlines,
     subshell parens, ``$(...)``/backtick substitutions (recursively), env-var prefixes
@@ -64,13 +68,16 @@ UNKNOWN_LOG: Path = _config_dir() / "permission-unknowns.log"
 
 # Shell scaffolding tokens skipped when finding a segment's real command. Ask-patterns are checked
 # against the WHOLE command first, so a dangerous body (``for x; do rm -rf ...; done``) is still
-# caught — this only lets a loop/conditional with an allowed body auto-allow.
+# caught — this only lets a loop/conditional with an allowed body auto-allow. ``if``/``while``/
+# ``until`` are skipped too: what follows them is a real command (the condition), so it is judged
+# by the allow check and the ask-words guard like any other — never waved through as scaffolding.
 _STRUCTURAL: frozenset[str] = frozenset(
     {"do", "done", "then", "else", "elif", "fi", "esac", "{", "}", "!", "in"}
+    | {"if", "while", "until"}
 )
-# Control-flow openers whose segment is a declaration, not a command to classify (the body arrives
-# as its own split segments; any ``$(...)`` inside is classified separately).
-_OPENERS: frozenset[str] = frozenset({"for", "while", "until", "if", "case", "[", "[["})
+# Openers whose segment is a declaration, not a command to classify (the body arrives as its own
+# split segments; any ``$(...)`` inside is classified separately).
+_OPENERS: frozenset[str] = frozenset({"for", "case", "[", "[["})
 # Harmless shell builtins that run no external program — allowed as scaffolding wherever they
 # appear (``exit 1`` after ``||``, ``set -e``, ``export FOO=$(...)`` — the substitution is still
 # classified on its own).
@@ -93,6 +100,31 @@ _BUILTINS: frozenset[str] = frozenset(
 _WRAPPERS: frozenset[str] = frozenset(
     {"xargs", "timeout", "nohup", "env", "command", "time", "nice"}
 )
+# Per wrapper: the options that take a separate value (consumed with it), and the bare flags.
+# Anything else in a wrapper's option run — an unknown option, combined short flags, ``env -S``
+# (which re-splits a string into a command) — cannot be read with confidence, so unwrapping
+# fails closed (None) rather than guessing which token is the executable.
+_WRAPPER_VALUE_OPTS: dict[str, frozenset[str]] = {
+    "xargs": frozenset(
+        {"-I", "-J", "-R", "-S", "-n", "-P", "-L", "-s", "-E", "-d", "-a"}
+        | {"--arg-file", "--delimiter", "--eof", "--max-args", "--max-procs", "--max-lines"}
+        | {"--max-chars", "--process-slot-var"}
+    ),
+    "timeout": frozenset({"-s", "-k", "--signal", "--kill-after"}),
+    "env": frozenset({"-u", "-C", "-P", "--unset", "--chdir"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "time": frozenset({"-f", "-o", "--format", "--output"}),
+}
+_WRAPPER_FLAGS: dict[str, frozenset[str]] = {
+    "xargs": frozenset(
+        {"-0", "-r", "-t", "-p", "-x", "-o", "-i", "-l", "-e"}
+        | {"--null", "--no-run-if-empty", "--verbose", "--interactive", "--exit", "--open-tty"}
+    ),
+    "timeout": frozenset({"-v", "-f", "-p", "--verbose", "--preserve-status", "--foreground"}),
+    "env": frozenset({"-", "-i", "-0", "-v", "--ignore-environment", "--null", "--debug"}),
+    "command": frozenset({"-p", "-v", "-V"}),
+    "time": frozenset({"-p", "-v", "-a", "-l", "--portability", "--verbose", "--append"}),
+}
 _ENV_ASSIGN: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _MAX_UNWRAP_DEPTH: int = 5  # nested wrappers (``env nice timeout 5 cmd``) peeled before giving up
 _SUB_TOKEN: str = "__SUB__"  # placeholder left where a $(...)/backtick substitution was extracted
@@ -122,8 +154,44 @@ def ledger_allow_keys(ledger: dict[str, Any]) -> list[str]:
     return sorted({k.strip() for k in keys})
 
 
+def _word_hit(word: str, token: str) -> bool:
+    """Whether a token is a guarded word: equal to it, or — for a word ending in ``-`` (an
+    ``aws`` verb prefix such as ``delete-``) — starting with it.
+    """
+    return token.startswith(word) if word.endswith("-") else token == word
+
+
+def ask_words_match(command: str, ledger: dict[str, Any]) -> str | None:
+    """Return the note of the first ``ask_words`` rule a command part trips, else None.
+
+    A rule is ``{"tool": str, "all": [[word, ...], ...], "note": str}``. A part trips it when
+    its head — env prefixes, wrappers and path stripped, as the allow check resolves it — is
+    ``tool`` and every group in ``all`` has a word among the part's later tokens that do not
+    start with ``-`` (an empty ``all`` guards the tool itself). Tokens come from the same
+    quote-aware split as the allow check, so ``-m "merge notes"`` stays one token and never
+    matches, while any option value is just another token and never hides a guarded word.
+    """
+    rules = [r for r in ledger.get("ask_words") or [] if isinstance(r, dict) and r.get("tool")]
+    for part in command_parts(command):
+        tokens = _unwrap_tokens(_segment_tokens(part))
+        if tokens is None:
+            # A wrapper this gate cannot read could be hiding any guarded command.
+            return "wrapper options could not be resolved — confirm the wrapped command"
+        if not tokens:
+            continue
+        words = [t for t in tokens[1:] if not t.startswith("-")]
+        for rule in rules:
+            groups: list[list[str]] = rule.get("all") or []
+            if tokens[0] == rule["tool"] and all(
+                any(_word_hit(w, t) for w in group for t in words) for group in groups
+            ):
+                return str(rule.get("note") or "matched a guarded word rule")
+    return None
+
+
 def ask_match(command: str, ledger: dict[str, Any]) -> str | None:
-    """Return the note of the first ask-pattern/denial the command trips, else None.
+    """Return the note of the first ask-words rule, ask-pattern or denial the command trips,
+    else None. Word rules (:func:`ask_words_match`) are checked first.
 
     Each ``ask_patterns``/``denials`` regex is applied with ``re.search`` (so a ``^`` anchors a
     part's head) to two views of the command: the raw string, so a guarded token anywhere — a
@@ -131,6 +199,9 @@ def ask_match(command: str, ledger: dict[str, Any]) -> str | None:
     the allow check judges (``_normalized_parts``), so what the ledger allows and what it guards
     are read from the same text. A match on either view is an ask; a malformed regex is skipped.
     """
+    word_note = ask_words_match(command, ledger)
+    if word_note is not None:
+        return word_note
     views = [command, *_normalized_parts(command)]
     for entry in list(ledger.get("ask_patterns") or []) + list(ledger.get("denials") or []):
         pattern = entry.get("pattern") if isinstance(entry, dict) else None
@@ -343,19 +414,48 @@ def _unwrap_tokens(tokens: list[str], depth: int = 0) -> list[str] | None:
     Drops leading scaffolding and env-var assignments, reduces a path head to its basename
     (``_strip_tokens``), and peels wrapper commands (``xargs``/``timeout``/``env``/...) down to
     their argument, re-stripping after each. Returns None when wrappers nest deeper than
-    ``_MAX_UNWRAP_DEPTH`` — unreadable, so the caller must not allow it.
+    ``_MAX_UNWRAP_DEPTH`` or a wrapper carries an option it cannot read
+    (:func:`_skip_wrapper_options`) — unreadable, so the caller must not allow it.
     """
     if depth > _MAX_UNWRAP_DEPTH:
         return None
     tokens = _strip_tokens(tokens)
     if not tokens or tokens[0] not in _WRAPPERS:
         return tokens
-    head, rest = tokens[0], tokens[1:]
-    while rest and rest[0].startswith("-"):
-        rest = rest[1:]
-    if head == "timeout" and rest:
+    rest = _skip_wrapper_options(tokens[0], tokens[1:])
+    if rest is None:
+        return None
+    if tokens[0] == "timeout" and rest:
         rest = rest[1:]  # skip the duration argument
     return _unwrap_tokens(rest, depth + 1)
+
+
+def _skip_wrapper_options(wrapper: str, rest: list[str]) -> list[str] | None:
+    """Drop a wrapper's leading options, each value-taking one together with its value.
+
+    Args:
+        wrapper: The wrapper command (a member of ``_WRAPPERS``).
+        rest: The tokens after it.
+
+    Returns:
+        The tokens from the wrapped command on, or None when an option is not one this gate
+        knows for that wrapper — unreadable, so the caller must fail closed.
+    """
+    values = _WRAPPER_VALUE_OPTS.get(wrapper, frozenset())
+    flags = _WRAPPER_FLAGS.get(wrapper, frozenset())
+    while rest and rest[0].startswith("-"):
+        option = rest[0]
+        if option == "--":
+            return rest[1:]
+        if option in values:
+            rest = rest[2:]  # the option and its separate value
+        elif option in flags or option.split("=", 1)[0] in values | flags:
+            rest = rest[1:]  # a bare flag, or ``--long=value`` carrying its own value
+        elif option[:2] in values and not option.startswith("--"):
+            rest = rest[1:]  # a short option with its value attached (``-n1``, ``-I{}``)
+        else:
+            return None
+    return rest
 
 
 def _tokens_allowed(tokens: list[str], keys: list[str]) -> bool:

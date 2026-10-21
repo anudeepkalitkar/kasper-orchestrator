@@ -54,6 +54,7 @@ OWNED_PATHS: tuple[str, ...] = (
     "agents",
     "codex",
     "commands",
+    "debate",
     "rules",
     "scripts",
     "skills",

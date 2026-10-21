@@ -228,3 +228,75 @@ def test_feature_push_allow_pattern(
         ],
     }
     assert permission_gate.unallowed_parts(command, ledger) == ([] if allowed else [command])
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "options"),
+    [
+        ("xargs", ["-I", "echo"]),
+        ("xargs", ["-n", "1"]),
+        ("xargs", ["-P", "2"]),
+        ("xargs", ["-L", "1"]),
+        ("xargs", ["--max-args=1"]),
+        ("xargs", ["-n1"]),
+        ("timeout", ["-s", "KILL", "-k", "2"]),
+        ("timeout", ["--signal=KILL"]),
+        ("env", ["-u", "FOO", "-C", "directory with spaces"]),
+        ("env", ["--unset=FOO"]),
+        ("nice", ["-n", "5"]),
+        ("nice", ["--adjustment=5"]),
+        ("time", ["-f", "%E", "-o", "timing.txt"]),
+        ("time", ["--output=timing.txt"]),
+        ("xargs", ["-0", "-r", "--"]),
+        ("xargs", []),
+    ],
+)
+def test_wrapper_options_preserve_the_wrapped_command(
+    permission_gate: ModuleType, wrapper: str, options: list[str]
+) -> None:
+    """Consume option values without mistaking them for executable names."""
+    command = ["5", "git", "merge", "x"] if wrapper == "timeout" else ["git", "merge", "x"]
+    assert permission_gate._skip_wrapper_options(wrapper, options + command) == command
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "options"),
+    [
+        ("xargs", ["-Z"]),
+        ("xargs", ["--unknown=value"]),
+        ("xargs", ["-rt"]),
+        ("env", ["-iv"]),
+        ("env", ["-S", "git merge x"]),
+        ("env", ["--split-string=git merge x"]),
+    ],
+)
+def test_unreadable_wrapper_options_fail_closed(
+    permission_gate: ModuleType, wrapper: str, options: list[str]
+) -> None:
+    """Unknown options, combined flags and split-string cannot authorize a command."""
+    assert permission_gate._skip_wrapper_options(wrapper, options + ["git", "status"]) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if git merge x; then echo done; fi",
+        "while git merge x; do echo done; done",
+        "until git merge x; do echo done; done",
+        "! git merge x",
+        "{ git merge x; }",
+        "(git merge x)",
+        "printf x | xargs -I echo git merge x",
+        "timeout -s KILL 5 git merge x",
+    ],
+)
+def test_condition_and_wrapper_commands_reach_both_permission_checks(
+    permission_gate: ModuleType, command: str
+) -> None:
+    """Regex guards cannot mask a condition or wrapper skipped by token classification."""
+    ledger = {
+        "allow_keys": {"echo": "output", "printf": "output"},
+        "ask_words": [{"tool": "git", "all": [["merge"]], "note": "human merge"}],
+    }
+    assert permission_gate.unallowed_parts(command, ledger)
+    assert permission_gate.ask_match(command, ledger) == "human merge"

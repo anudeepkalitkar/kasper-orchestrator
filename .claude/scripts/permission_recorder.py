@@ -10,7 +10,10 @@ twice. Guardrails:
   * Destructive / outward-facing / arbitrary-execution heads (``rm``, ``curl``, ``bash``, ``ssh``,
     ``open``, ...) are never promoted; nor is any ``git push`` form beyond the feature-branch
     pattern already in the ledger. Promote those deliberately with ``/permit`` if ever wanted.
-  * Nothing records in ``bypassPermissions`` mode (no prompt happened, so nothing was granted).
+  * Grants record only in the modes where the human is actually prompted (``default``,
+    ``acceptEdits``, ``plan``). Any other mode — ``bypassPermissions``, auto mode (whose
+    approvals come from a safety classifier, not the human), or a missing/unknown mode —
+    records nothing: fail closed.
 
 Grant keys are token prefixes sized per tool (``aws`` -> 3 tokens, ``git``/``gh``/``docker`` -> 2,
 default 1) so a grant covers the operation, not the whole tool. Denials cannot be observed by any
@@ -41,6 +44,10 @@ from bash_permission_gate import (  # noqa: E402
     load_ledger,
     unallowed_parts,
 )
+
+# Permission modes in which a non-allowed Bash call reaches the human as a prompt — the only
+# modes in which "it ran" means "the human approved it".
+PROMPTED_MODES: frozenset[str] = frozenset({"default", "acceptEdits", "plan"})
 
 # Heads that must never become standing grants — each use stays a one-time human approval.
 NEVER_PROMOTE: frozenset[str] = frozenset(
@@ -160,8 +167,8 @@ def main() -> None:
         data = json.load(sys.stdin)
     except Exception:
         return
-    if data.get("tool_name") != "Bash" or data.get("permission_mode") == "bypassPermissions":
-        return
+    if data.get("tool_name") != "Bash" or data.get("permission_mode") not in PROMPTED_MODES:
+        return  # not Bash, or no human prompt happened in this mode: nothing was granted
     command = (data.get("tool_input") or {}).get("command", "")
     if not command.strip():
         return

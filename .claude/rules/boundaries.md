@@ -68,7 +68,10 @@ values in payloads, logs, error reports, or pasted output.
 and what must be confirmed.** The moving parts:
 - **Gate** (`.claude/scripts/bash_permission_gate.py`, PreToolUse on Bash): decomposes any command —
   compounds, pipelines, env prefixes, wrappers, loops, substitutions — and auto-allows when
-  every part is covered. Guarded patterns force a prompt showing the ledger's note. Unknowns fall
+  every part is covered. Guards force a prompt showing the ledger's note and beat every allow
+  and grant: `ask_words` (a tool plus guarded words, matched on the part's tokens so no option
+  value can hide them — `git` + `merge`, `gh` + `secret` + `set`) and `ask_patterns` (regex).
+  Unknowns fall
   through to a one-time prompt and are logged to `.claude/permission-unknowns.log`.
 - **Recorder** (`.claude/scripts/permission_recorder.py`, PostToolUse on Bash): a granted prompt is
   promoted into `grants` so the same command never prompts twice. Destructive/outward heads
@@ -82,7 +85,7 @@ Requirements:
 2. **Record denials with the why** (`/permit --deny`) so the next prompt shows the user's own words
    and variants aren't re-attempted.
 3. **Grants widen, guards don't.** `allow_keys`/`grants`/`allow_patterns` grow from approvals;
-   `ask_patterns` are weakened only by the user's explicit instruction.
+   `ask_words`/`ask_patterns` are weakened only by the user's explicit instruction.
    Keep it healthy: when `permission-unknowns.log` accumulates, offer `/permit --review`; a wrong
    ledger entry gets fixed, not worked around.
 4. **The ledger governs prompting, not policy** — the filesystem/network boundaries above apply

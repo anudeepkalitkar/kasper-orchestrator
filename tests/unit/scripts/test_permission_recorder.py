@@ -36,11 +36,19 @@ def test_opaque_substitution_leaves_entire_ledger_untouched(
     permission_recorder: ModuleType, recorder_effects: Mock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Approving an opaque body must not grant the apparent od command after its closer."""
-    command = "echo \"it's $(echo \")\") ; od -c; echo \""
+    command = 'echo "it\'s $(echo ")") ; od -c; echo "'
     monkeypatch.setattr(
         permission_recorder.sys,
         "stdin",
-        StringIO(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})),
+        StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "permission_mode": "default",
+                    "tool_input": {"command": command},
+                }
+            )
+        ),
     )
 
     permission_recorder.main()
@@ -61,7 +69,15 @@ def test_real_unallowed_head_promotes_with_its_part_as_example(
     monkeypatch.setattr(
         permission_recorder.sys,
         "stdin",
-        StringIO(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})),
+        StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "permission_mode": "default",
+                    "tool_input": {"command": command},
+                }
+            )
+        ),
     )
 
     permission_recorder.main()
@@ -74,7 +90,7 @@ def test_real_unallowed_head_promotes_with_its_part_as_example(
                 "note": "auto-recorded: user approved this command",
                 "example": "od -c",
                 "added": "2026-09-18",
-            }
+            },
         ]
     }
     recorder_effects.write.assert_called_once_with(
@@ -84,3 +100,69 @@ def test_real_unallowed_head_promotes_with_its_part_as_example(
     recorder_effects.replace.assert_called_once_with(
         Path("/fake/ledger.json.tmp"), Path("/fake/ledger.json")
     )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["default", "acceptEdits", "plan", "auto", "bypassPermissions", "dontAsk", "unknown", "", None],
+)
+def test_only_human_prompt_modes_record_grants(
+    permission_recorder: ModuleType,
+    recorder_effects: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str | None,
+) -> None:
+    """Missing and non-human modes leave both ledger and persistence untouched."""
+    payload: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": "od -c"}}
+    if mode is not None:
+        payload["permission_mode"] = mode
+    monkeypatch.setattr(permission_recorder.sys, "stdin", StringIO(json.dumps(payload)))
+    permission_recorder.main()
+    if mode in ("default", "acceptEdits", "plan"):
+        assert recorder_effects.ledger["grants"][-1]["key"] == "od"
+        recorder_effects.write.assert_called_once()
+        recorder_effects.replace.assert_called_once()
+    else:
+        assert recorder_effects.ledger == {"grants": [{"key": "echo"}]}
+        recorder_effects.write.assert_not_called()
+        recorder_effects.replace.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["default", "acceptEdits", "plan"])
+def test_word_guarded_approval_never_promotes(
+    permission_recorder: ModuleType,
+    recorder_effects: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Word rules alone prevent promotion even after a human approves execution."""
+    ledger = {
+        "grants": [],
+        "ask_words": [{"tool": "git", "all": [["merge", "clean"]]}],
+    }
+    recorder_effects.ledger = ledger
+    command = "git merge feature"
+    assert permission_recorder._grant_key(command) == "git merge"
+    assert permission_recorder.unallowed_parts(command, ledger) == [command]
+    monkeypatch.setattr(
+        permission_recorder.sys,
+        "stdin",
+        StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "permission_mode": mode,
+                    "tool_input": {"command": command},
+                }
+            )
+        ),
+    )
+
+    permission_recorder.main()
+
+    assert ledger == {
+        "grants": [],
+        "ask_words": [{"tool": "git", "all": [["merge", "clean"]]}],
+    }
+    recorder_effects.write.assert_not_called()
+    recorder_effects.replace.assert_not_called()

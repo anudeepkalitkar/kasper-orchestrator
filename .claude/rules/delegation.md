@@ -26,6 +26,11 @@ cross-discipline routes back through KASPER.
   the tester authors tier-correct tests and runs the gate, the reviewer judges the diff with ranked
   findings, and the arch-reviewer judges the architect's design before it is built. The reviewer
   and the arch-reviewer edit nothing at all; the tester writes only tests.
+- **debate (Claude + Codex)** — not a subagent either: only when KASPER judges a question
+  contested (the trigger in the `/kasper` skill's step 3), `python3 .claude/scripts/debate.py
+  architect --brief <file> --out <file>` runs a debate — propose → anonymised critique → Fable
+  judge, prompts in `.claude/debate/` — and hands KASPER one report, from which the architect
+  agent then authors `docs/design/` and the arch-reviewer seat judges it as before.
 - **documentor** — owns the written truth (`docs/`, README, and the local-only `tasks/` docs);
   docs only, never production code or tests.
 - **git-workflow** — the only agent that commits, pushes, or merges; checkpoints on the Codex

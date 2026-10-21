@@ -17,12 +17,13 @@ _KASPER_COMMAND = 'python3 "$HOME/.claude/scripts/run_hook.py" notify'
 # ---------------------------------------------------------------- constants
 
 
-def test_owned_paths_include_the_eight_paths_with_codex_seats() -> None:
-    """The seven original owned paths plus Codex seat prompts must ship."""
+def test_owned_paths_include_the_nine_paths_with_debate_seats() -> None:
+    """The original paths plus Codex and debate seat prompts must ship."""
     assert install.OWNED_PATHS == (
         "agents",
         "codex",
         "commands",
+        "debate",
         "rules",
         "scripts",
         "skills",

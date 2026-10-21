@@ -89,7 +89,11 @@ gate, the reviewer seat judges the diff; the arch-reviewer seat judges a design 
 ADR before any of it is built. The tester's report opens `GATE: green` or
 `GATE: red`; the script exits 0 green · 1 red · 2 bad arguments · 3 Codex not signed in (the
 human runs `codex login`) · 4 timeout · 5 no verdict. Owner ≠ verifier now also means
-vendor ≠ vendor.
+vendor ≠ vendor. When KASPER judges a question contested (the trigger in the skill's step 3),
+`python3 .claude/scripts/debate.py architect --brief <file> --out <file>`
+([debate.py](scripts/debate.py), prompts in [debate/](debate/)) runs a Claude +
+Codex debate — propose → anonymised critique → Fable judge — and hands KASPER one report; the
+architect agent then authors `docs/design/` from it and the arch-reviewer seat judges as before.
 
 ## Skills ([skills/](skills/))
 
@@ -128,9 +132,10 @@ Every hook command runs through one dispatcher —
   `notify.wav` as the fallback).
 - Command helpers: [git_checkpoint.py](scripts/git_checkpoint.py) (backs
   `/checkpoint`) · [new_task.py](scripts/new_task.py) (backs `/new-task`). Beside them,
-  [codex_seat.py](scripts/codex_seat.py) runs a Codex verification seat and
+  [codex_seat.py](scripts/codex_seat.py) runs a Codex verification seat,
+  [debate.py](scripts/debate.py) runs a contested question's debate, and
   [model_route.py](scripts/model_route.py) picks the model tier for one spawn (it backs
-  the routing step) — KASPER calls both directly; neither is a hook.
+  the routing step) — KASPER calls all three directly; none is a hook.
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
   shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
   never those.
@@ -138,7 +143,7 @@ Every hook command runs through one dispatcher —
 ## Where things are
 
 Everything above lives beside this file, under `~/.claude/` — the Codex seat prompts in
-`codex/` among them. The source of truth is the
+`codex/` and the debate prompts in `debate/` among them. The source of truth is the
 kasper-orchestrator repo — the project's only home; that repo is public, so its decision record
 lives in the clone's local, git-excluded `docs/adr/`, never in the repo itself — in a private repo
 the hook leaves `docs/adr/` tracked and the ADRs are committed with the code. Change the config there

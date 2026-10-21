@@ -38,7 +38,7 @@ git clone <repo> && cd kasper-orchestrator
 python3 install.py                  # Windows: python install.py
 ```
 
-The installer copies KASPER's own files — `agents/`, `codex/`, `commands/`, `rules/`,
+The installer copies KASPER's own files — `agents/`, `codex/`, `commands/`, `debate/`, `rules/`,
 `scripts/`, `skills/`, `sounds/`, `CLAUDE.md` — out of `.claude/` into your Claude home, `~/.claude/`,
 and **merges** `settings.json` and `permissions-ledger.json` into whatever is already
 there, so your own keys (the model pin, the theme, your own hooks) and your own allow keys,

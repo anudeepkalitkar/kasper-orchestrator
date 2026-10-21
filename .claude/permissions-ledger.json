@@ -243,9 +243,25 @@
     {
       "pattern": ":\\(\\)\\s*\\{[^}]*\\}\\s*;",
       "note": "fork bomb"
+    },
+    {
+      "pattern": "^(?:printf|test)\\s(?:.*\\s)?-v",
+      "note": "printf -v / test -v evaluate a variable name, and an array subscript in it runs code — confirm"
     }
   ],
   "ask_words": [
+    {
+      "tool": "gh",
+      "all": [
+        [
+          "pr"
+        ],
+        [
+          "merge"
+        ]
+      ],
+      "note": "merges stay human (git-workflow)"
+    },
     {
       "tool": "git",
       "all": [
@@ -312,10 +328,36 @@
           "put-",
           "update-",
           "create-",
-          "modify-"
+          "modify-",
+          "delete",
+          "terminate",
+          "create",
+          "update",
+          "put",
+          "deploy",
+          "deploy-",
+          "run",
+          "run-",
+          "start",
+          "start-",
+          "stop",
+          "stop-",
+          "reboot",
+          "reboot-",
+          "modify",
+          "register",
+          "register-",
+          "deregister",
+          "deregister-",
+          "invoke",
+          "invoke-",
+          "cp",
+          "mv",
+          "sync",
+          "mb"
         ]
       ],
-      "note": "AWS delete/change/rotate — costs money or loses data, confirm (boundaries)"
+      "note": "AWS write (delete/change/create/copy/sync/run/...) — costs money or loses data, confirm (boundaries)"
     }
   ],
   "grants": [

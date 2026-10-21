@@ -34,11 +34,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent))
 from bash_permission_gate import (  # noqa: E402
     _BUILTINS,
-    _ENV_ASSIGN,
     _OPAQUE_SUBSTITUTION,
-    _WRAPPERS,
     LEDGER_PATH,
-    _strip_tokens,
+    _segment_tokens,
+    _unwrap_tokens,
     ask_match,
     ledger_allow_keys,
     load_ledger,
@@ -137,14 +136,13 @@ def _plausible_command(key: str) -> bool:
 
 def _grant_key(part: str) -> str | None:
     """Derive the ledger grant key for an unallowed command part, or None if not promotable."""
-    tokens = _strip_tokens(part.strip().split())
+    # The head is resolved exactly as the gate resolves it: ``_unwrap_tokens`` peels wrappers
+    # with the gate's ``_skip_wrapper_options``, so a wrapper option the gate cannot read
+    # (None) is never promoted, and the wrapped command — not the wrapper — becomes the key.
+    tokens = _unwrap_tokens(_segment_tokens(part))
+    if tokens is None:
+        return None
     effective = [t for t in tokens if not t.startswith("-")]
-    while effective and effective[0] in _WRAPPERS:
-        wrapper = effective.pop(0)  # promote the wrapped command, not the wrapper
-        if wrapper == "timeout" and effective:
-            effective.pop(0)  # skip the duration argument
-        while effective and _ENV_ASSIGN.match(effective[0]):
-            effective.pop(0)
     if not effective:
         return None
     head = effective[0]

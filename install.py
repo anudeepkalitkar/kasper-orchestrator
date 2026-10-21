@@ -243,8 +243,10 @@ def merge_ledger(existing: Mapping[str, Any] | None, seed: Mapping[str, Any]) ->
 
     Nothing is ever removed and nothing existing is ever rewritten: absent ``allow_keys``
     are added, ``allow_patterns`` and ``ask_patterns`` entries absent *by pattern* are
-    appended, and ``grants``, ``denials`` and ``_doc`` are left exactly as found — grants
-    are per-machine, only the seed is portable.
+    appended, ``ask_words`` rules absent *as a whole rule* are appended (a home rule is never
+    edited, so a seed rule that differs from it in any word lands beside it), and ``grants``,
+    ``denials`` and ``_doc`` are left exactly as found — grants are per-machine, only the seed
+    is portable.
 
     Args:
         existing: The home ledger, or None when the home has none; not modified.
@@ -267,6 +269,10 @@ def merge_ledger(existing: Mapping[str, Any] | None, seed: Mapping[str, Any]) ->
             for entry in seed.get(name, [])
             if entry.get("pattern") not in known
         )
+    ask_words: list[Any] = merged.setdefault("ask_words", [])
+    ask_words.extend(
+        copy.deepcopy(rule) for rule in seed.get("ask_words", []) if rule not in ask_words
+    )
     return merged
 
 
@@ -468,6 +474,7 @@ def _load_ledger(path: Path) -> dict[str, Any]:
                 path,
                 f"'{name}' entries need a string 'pattern'",
             )
+    _check_shape(isinstance(data.get("ask_words", []), list), path, "'ask_words' must be a list")
     return data
 
 

@@ -76,26 +76,18 @@ _STRUCTURAL: frozenset[str] = frozenset(
     | {"if", "while", "until"}
 )
 # Openers whose segment is a declaration, not a command to classify (the body arrives as its own
-# split segments; any ``$(...)`` inside is classified separately).
-_OPENERS: frozenset[str] = frozenset({"for", "case", "[", "[["})
+# split segments; any ``$(...)`` inside is classified separately). ``[``/``[[`` are NOT here:
+# ``[[ 'a[$(cmd)]' -eq 0 ]]`` evaluates the operand as arithmetic and runs ``cmd`` (and bash 5's
+# ``[ -v 'a[$(cmd)]' ]`` evaluates the subscript), so a test segment is judged like any command.
+_OPENERS: frozenset[str] = frozenset({"for", "case"})
 # Harmless shell builtins that run no external program — allowed as scaffolding wherever they
-# appear (``exit 1`` after ``||``, ``set -e``, ``export FOO=$(...)`` — the substitution is still
-# classified on its own).
-_BUILTINS: frozenset[str] = frozenset(
-    {
-        "exit",
-        "break",
-        "continue",
-        "return",
-        "set",
-        "export",
-        "unset",
-        "shift",
-        "wait",
-        "local",
-        "readonly",
-    }
-)
+# appear (``exit 1`` after ``||``, ``set -e``). Only builtins that never evaluate an argument as
+# code, an arithmetic expression or an array subscript belong here: ``unset``, ``export``,
+# ``local``, ``readonly``, ``declare``, ``wait`` (``-p var``), ``let``, ``eval``, ``source``,
+# ``trap`` and ``read`` all can (``unset 'a[$(git clean -fd)]'`` runs git clean), so they are
+# judged by the ledger like any command and prompt unless granted. The numeric builtins below
+# parse their argument as a plain number (verified: ``exit 'a[$(cmd)]'`` does not run ``cmd``).
+_BUILTINS: frozenset[str] = frozenset({"exit", "break", "continue", "return", "shift", "set"})
 # Wrappers whose real command is their argument — unwrap and classify that instead.
 _WRAPPERS: frozenset[str] = frozenset(
     {"xargs", "timeout", "nohup", "env", "command", "time", "nice"}
@@ -125,6 +117,22 @@ _WRAPPER_FLAGS: dict[str, frozenset[str]] = {
     "command": frozenset({"-p", "-v", "-V"}),
     "time": frozenset({"-p", "-v", "-a", "-l", "--portability", "--verbose", "--append"}),
 }
+# Builtins that evaluate an argument as code, a variable name (array subscript) or arithmetic.
+# A quoted ``$(...)`` the substitution extractor rightly leaves alone (``'a[$(cmd)]'``) is still
+# run when one of these evaluates it — so such a part asks explicitly (:func:`evaluated_payload`).
+_EVALUATING_HEADS: frozenset[str] = frozenset(
+    {"unset", "local", "export", "declare", "typeset", "readonly", "read", "eval", "source", "."}
+    | {"trap", "let", "printf", "test", "[", "[["}
+)
+_PAYLOAD_MARKERS: tuple[str, ...] = ("$(", "`", "<(")  # what bash runs when it evaluates text
+# An arithmetic body — ``(( ... ))``, ``$(( ... ))``, ``for (( ...; ...; ... ))``. Matched on the
+# raw command because segment splitting treats ``(``/``)`` as subshell separators and drops them.
+# Non-greedy, so a nested ``)`` ends the body early — fine: the marker sits before it.
+_ARITHMETIC: re.Pattern[str] = re.compile(r"\(\((.*?)\)\)", re.DOTALL)
+_EVALUATED_NOTE: str = (
+    "a quoted command substitution bash may evaluate (array subscript, arithmetic, or an "
+    "evaluating builtin) — confirm"
+)
 _ENV_ASSIGN: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _MAX_UNWRAP_DEPTH: int = 5  # nested wrappers (``env nice timeout 5 cmd``) peeled before giving up
 _SUB_TOKEN: str = "__SUB__"  # placeholder left where a $(...)/backtick substitution was extracted
@@ -189,9 +197,38 @@ def ask_words_match(command: str, ledger: dict[str, Any]) -> str | None:
     return None
 
 
+def evaluated_payload(command: str) -> str | None:
+    """Return a note when a part carries a command substitution bash may evaluate, else None.
+
+    Trips on an arithmetic body (``((``, ``$((``, ``for ((``) in the raw command that holds
+    ``$(``, a backtick or ``<(``; or a part with such a token — quoted or not — inside an array
+    subscript (``[``), or whose resolved head is an evaluating builtin (``_EVALUATING_HEADS``).
+    Fails closed: a builtin is flagged whatever its options, and a part whose wrappers cannot be
+    read is flagged whatever it holds.
+    """
+    joined = _strip_heredocs(command).replace("\\\n", " ")
+    for body in _ARITHMETIC.findall(joined):
+        if any(marker in body for marker in _PAYLOAD_MARKERS):
+            return _EVALUATED_NOTE  # arithmetic evaluates its operands — subscripts included
+    for part in command_parts(command):
+        raw = _segment_tokens(part)
+        tokens = _unwrap_tokens(raw)
+        if tokens is None:
+            return _EVALUATED_NOTE  # an unreadable wrapper could be running anything
+        if not any(marker in token for token in raw for marker in _PAYLOAD_MARKERS):
+            continue
+        if tokens and tokens[0] in _EVALUATING_HEADS:
+            return _EVALUATED_NOTE
+        for token in tokens:
+            if any(m in token for m in _PAYLOAD_MARKERS) and ("[" in token or "((" in token):
+                return _EVALUATED_NOTE
+    return None
+
+
 def ask_match(command: str, ledger: dict[str, Any]) -> str | None:
     """Return the note of the first ask-words rule, ask-pattern or denial the command trips,
-    else None. Word rules (:func:`ask_words_match`) are checked first.
+    else None. Word rules (:func:`ask_words_match`) and evaluated payloads
+    (:func:`evaluated_payload`) are checked first.
 
     Each ``ask_patterns``/``denials`` regex is applied with ``re.search`` (so a ``^`` anchors a
     part's head) to two views of the command: the raw string, so a guarded token anywhere — a
@@ -199,7 +236,7 @@ def ask_match(command: str, ledger: dict[str, Any]) -> str | None:
     the allow check judges (``_normalized_parts``), so what the ledger allows and what it guards
     are read from the same text. A match on either view is an ask; a malformed regex is skipped.
     """
-    word_note = ask_words_match(command, ledger)
+    word_note = ask_words_match(command, ledger) or evaluated_payload(command)
     if word_note is not None:
         return word_note
     views = [command, *_normalized_parts(command)]

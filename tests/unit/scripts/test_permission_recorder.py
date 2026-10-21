@@ -16,6 +16,7 @@ import pytest
         ("codex login", "codex"),
         ("git worktree add /tmp/worktree feature", "git worktree"),
         ("python3 script.py", "python3"),
+        ("timeout -s KILL 5 git status", "git status"),
     ],
 )
 def test_legitimate_heads_keep_their_grant_keys(
@@ -37,6 +38,33 @@ def test_opaque_substitution_leaves_entire_ledger_untouched(
 ) -> None:
     """Approving an opaque body must not grant the apparent od command after its closer."""
     command = 'echo "it\'s $(echo ")") ; od -c; echo "'
+    monkeypatch.setattr(
+        permission_recorder.sys,
+        "stdin",
+        StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "permission_mode": "default",
+                    "tool_input": {"command": command},
+                }
+            )
+        ),
+    )
+
+    permission_recorder.main()
+
+    assert recorder_effects.ledger == {"grants": [{"key": "echo"}]}
+    recorder_effects.write.assert_not_called()
+    recorder_effects.replace.assert_not_called()
+
+
+def test_unreadable_wrapper_never_creates_a_grant(
+    permission_recorder: ModuleType, recorder_effects: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Human approval cannot teach a standing grant from an unreadable wrapper."""
+    command = "xargs -Z git status"
+    assert permission_recorder._grant_key(command) is None
     monkeypatch.setattr(
         permission_recorder.sys,
         "stdin",

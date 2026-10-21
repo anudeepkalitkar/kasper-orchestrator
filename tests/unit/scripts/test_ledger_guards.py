@@ -114,12 +114,37 @@ def test_repository_word_rules_are_well_formed_and_cover_guarded_tools() -> None
 
 
 @pytest.mark.parametrize(
+    "pattern",
+    [
+        r"\bgh\s+pr\s+merge\b",
+        r"\baws\s+[\w-]+\s+(delete|terminate|create|update|put|deploy|run|start|stop|reboot|"
+        r"modify|register|deregister|invoke|cp|sync|mb|rb)[\w-]*\b",
+    ],
+)
+def test_repository_retains_master_payload_guard_patterns(pattern: str) -> None:
+    """Keep the exact master regex guards alongside token-based policy."""
+    assert pattern in {entry["pattern"] for entry in LEDGER["ask_patterns"]}
+
+
+def test_repository_retains_merge_and_aws_word_rules() -> None:
+    """Regex restoration must preserve the complementary word-rule layer."""
+    rules = LEDGER["ask_words"]
+    assert any(rule["tool"] == "gh" and rule["all"] == [["pr"], ["merge"]] for rule in rules)
+    assert any(
+        rule["tool"] == "aws"
+        and len(rule["all"]) == 1
+        and {"cp", "mv", "sync", "run-", "invoke-", "delete-"} <= set(rule["all"][0])
+        for rule in rules
+    )
+
+
+@pytest.mark.parametrize(
     ("command", "guarded"),
     [
         ("aws service delete-item", True),
         ("aws service --delete-item", False),
         ("aws service undelete-item", False),
-        ("aws service delete", False),
+        ("aws service delete", True),
         ("gh variable list", False),
         ("gh issue delete X", False),
         ("gh variable list && gh issue delete X", False),
@@ -127,6 +152,11 @@ def test_repository_word_rules_are_well_formed_and_cover_guarded_tools() -> None
         ("echo git merge feature", False),
         ("git -C merge status", True),
         ("dropdb", True),
+        ("gh --repo owner/repo pr merge 1", True),
+        ("gh pr list", False),
+        ("gh issue merge 1", False),
+        ("aws --region us-east-1 s3 cp a s3://b/k", True),
+        ("aws s3 ls", False),
     ],
 )
 def test_word_rules_preserve_token_and_command_boundaries(
@@ -155,6 +185,9 @@ def test_word_rules_preserve_token_and_command_boundaries(
         ("nice -n 5 terraform apply", "ask"),
         ("xargs -Z git merge", "ask"),
         ("python3 -c 'import os; os.system(\"terraform apply\")'", "ask"),
+        ("case x in x) gh pr merge 1;; esac", "ask"),
+        ("case x in x) aws s3 cp a s3://b/k;; esac", "ask"),
+        ("python3 -c 'import os; os.system(\"gh pr merge 1\")'", "ask"),
         ("python3 - <<'PY'\nimport os\nos.system('terraform apply')\nPY", "ask"),
         ("git log --merges", "allow"),
         ("git -C x diff", "allow"),
@@ -165,6 +198,28 @@ def test_word_rules_preserve_token_and_command_boundaries(
         ("docker ps", "allow"),
         ('while read -r line; do echo "$line"; done', "prompt"),
         ("if git status; then echo ok; fi", "allow"),
+        ("unset 'a[$(git cl\"\"ean -fd)]'", "ask"),
+        ("[[ 'a[$(git cl\"\"ean -fd)]' -eq 0 ]]", "ask"),
+        ("local 'a[$(git merge x)]'", "ask"),
+        ("export 'a[$(git merge x)]'=1", "ask"),
+        ("printf -v 'a[$(git merge x)]' x", "ask"),
+        ("test -v 'a[$(git merge x)]'", "ask"),
+        ("gh --repo x pr merge 1", "ask"),
+        ("gh pr --repo x merge 1", "ask"),
+        ("aws --region us-east-1 s3 cp a s3://b/k", "ask"),
+        ("aws s3 sync . s3://b", "ask"),
+        ("aws ec2 run-instances", "ask"),
+        ("aws lambda invoke --function-name f out", "ask"),
+        ("gh pr view 1", "allow"),
+        ("true || exit 1", "allow"),
+        ("declare 'a[$(x)]'", "ask"),
+        ("let 'a[$(x)]'", "ask"),
+        ("(( a[$(x)] ))", "ask"),
+        ("((a[$(x)]))", "ask"),
+        ("for (( i=$(x); ; ))", "ask"),
+        ("eval '$(x)'", "ask"),
+        ("printf '%s' '$(x)'", "ask"),
+        ("echo '$(x)'", "allow"),
     ],
 )
 def test_pass_five_decisions_with_broad_grants(
@@ -176,10 +231,20 @@ def test_pass_five_decisions_with_broad_grants(
     expected: str,
 ) -> None:
     """Guard conditions, wrappers and script payloads despite broad user grants."""
-    tools = ["git", "gh", "aws", "docker", "terraform", "dropdb", "python3", "xargs", "printf"]
+    tools = [
+        "git",
+        "gh",
+        "aws",
+        "docker",
+        "terraform",
+        "dropdb",
+        "python3",
+        "xargs",
+        "printf",
+        "test",
+    ]
     ledger = {**LEDGER, "grants": [{"key": tool} for tool in tools]}
     # Unknown-command logging is faked for commands that defer to the native prompt.
-    assert (permission_gate.ask_match(command, ledger) is not None) is (expected == "ask")
     if expected == "allow":
         assert permission_gate.unallowed_parts(command, ledger) == []
     monkeypatch.setattr(permission_gate, "load_ledger", lambda: ledger)
@@ -192,10 +257,13 @@ def test_pass_five_decisions_with_broad_grants(
     output = capsys.readouterr().out
     if expected == "prompt":
         assert output == ""
+        assert permission_gate.ask_match(command, ledger) is None
         permission_unknown_log.open.assert_called_once_with("a", encoding="utf-8")
         return
+    assert output, f"Expected explicit {expected!r} decision; gate deferred with no output"
     result = json.loads(output)
     assert result["hookSpecificOutput"]["permissionDecision"] == expected
+    assert (permission_gate.ask_match(command, ledger) is not None) is (expected == "ask")
 
 
 @pytest.mark.parametrize("broad_grants", [False, True])

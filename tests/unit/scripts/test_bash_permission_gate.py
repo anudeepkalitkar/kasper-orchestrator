@@ -300,3 +300,49 @@ def test_condition_and_wrapper_commands_reach_both_permission_checks(
     }
     assert permission_gate.unallowed_parts(command, ledger)
     assert permission_gate.ask_match(command, ledger) == "human merge"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "declare 'a[$(x)]'",
+        "let 'a[$(x)]'",
+        "(( a[$(x)] ))",
+        "((a[$(x)]))",
+        "for (( i=$(x); ; ))",
+        "eval '$(x)'",
+        "printf '%s' '$(x)'",
+        "declare 'a[`x`]'",
+        "declare 'a[<(x)]'",
+        "timeout -s KILL 5 eval '$(x)'",
+        "xargs -Z git status",
+    ],
+)
+def test_evaluated_payload_requires_confirmation_note(
+    permission_gate: ModuleType, command: str
+) -> None:
+    """Evaluated text and unreadable wrappers require an explicit ask without ledger rules."""
+    note = permission_gate.evaluated_payload(command)
+    assert isinstance(note, str) and note.strip()
+    assert permission_gate.ask_match(command, {})
+
+
+def test_plain_arithmetic_expansion_has_no_evaluated_payload_ask(
+    permission_gate: ModuleType,
+) -> None:
+    """Arithmetic without a payload must not trigger the new evaluation guard."""
+    command = "echo $(( 1 + 2 ))"
+    ledger = {"allow_keys": {"echo": "output"}}
+    assert permission_gate.evaluated_payload(command) is None
+    assert permission_gate.ask_match(command, ledger) is None
+
+
+@pytest.mark.parametrize("command", ["echo '$(x)'", "git log --merges", "true || exit 1"])
+def test_literal_payload_and_safe_scaffolding_remain_allowed(
+    permission_gate: ModuleType, command: str
+) -> None:
+    """Literal echo text and harmless control flow must not acquire an evaluation guard."""
+    ledger = {"allow_keys": {"echo": "output", "git": "broad", "true": "scaffolding"}}
+    assert permission_gate.evaluated_payload(command) is None
+    assert permission_gate.ask_match(command, ledger) is None
+    assert permission_gate.unallowed_parts(command, ledger) == []

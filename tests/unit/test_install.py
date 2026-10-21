@@ -6,7 +6,12 @@ Every behaviour asserted here is specified by ADR-0006 §§3-10.
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
+
+import pytest
 
 import install
 from tests.helpers.settings import hook_commands
@@ -396,6 +401,49 @@ def test_merge_ledger_is_idempotent(
     """A second install adds nothing further."""
     once = install.merge_ledger(home_ledger, seed_ledger)
     assert install.merge_ledger(once, seed_ledger) == once
+
+
+@pytest.mark.parametrize("home", [None, {}, {"ask_words": []}])
+def test_merge_ledger_adds_missing_word_rules(home: dict[str, object] | None) -> None:
+    """Fresh and older home ledgers acquire the seed's word guard."""
+    rule = {"tool": "gh", "all": [["pr"], ["merge"]]}
+    assert install.merge_ledger(home, {"ask_words": [rule]})["ask_words"] == [rule]
+
+
+def test_merge_ledger_preserves_home_word_rules_and_deduplicates_whole_rules() -> None:
+    """A changed same-tool guard lands beside the home rule; identical rules land once."""
+    home_rule = {"tool": "aws", "all": [["delete"]], "note": "home"}
+    seed_rule = {"tool": "aws", "all": [["delete", "cp"]], "note": "seed"}
+    home = {"ask_words": [home_rule]}
+    seed = {"ask_words": [copy.deepcopy(home_rule), seed_rule, copy.deepcopy(seed_rule)]}
+    before = copy.deepcopy((home, seed))
+
+    merged = install.merge_ledger(home, seed)
+
+    assert merged["ask_words"] == [home_rule, seed_rule]
+    assert install.merge_ledger(merged, seed) == merged
+    assert (home, seed) == before
+
+
+@pytest.mark.parametrize("invalid", [None, {}, "guard", 1, False])
+def test_load_ledger_rejects_non_list_word_rules(
+    monkeypatch: pytest.MonkeyPatch, invalid: object
+) -> None:
+    """Malformed word-guard containers fail validation before an installation writes."""
+    monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps({"ask_words": invalid})))
+    with pytest.raises(ValueError, match="'ask_words' must be a list"):
+        install._load_ledger(Path("/fake/ledger.json"))
+
+
+@pytest.mark.parametrize(
+    "data", [{}, {"ask_words": []}, {"ask_words": [{"tool": "aws", "all": []}]}]
+)
+def test_load_ledger_accepts_missing_or_list_word_rules(
+    monkeypatch: pytest.MonkeyPatch, data: dict[str, object]
+) -> None:
+    """Older ledgers and valid word-rule lists remain loadable."""
+    monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(data)))
+    assert install._load_ledger(Path("/fake/ledger.json")) == data
 
 
 # ---------------------------------------------------------------- plan_files

@@ -28,6 +28,14 @@ def permission_gate(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleT
 
 
 @pytest.fixture
+def permission_unknown_log(permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """Capture unknown-command logging without filesystem access."""
+    log = Mock(open=mock_open())
+    monkeypatch.setattr(permission_gate, "UNKNOWN_LOG", log)
+    return log
+
+
+@pytest.fixture
 def permission_recorder(
     repo_root: Path, permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> ModuleType:
@@ -161,3 +169,15 @@ def debate_files(debate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict[Pa
         debate.subprocess, "Popen", Mock(side_effect=AssertionError("unfaked child"))
     )
     return files
+
+
+@pytest.fixture
+def checkpoint(repo_root: Path) -> ModuleType:
+    """Import the checkpoint helper without running Git."""
+    return load_script(repo_root, "git_checkpoint")
+
+
+@pytest.fixture
+def run_hook(repo_root: Path) -> ModuleType:
+    """Import the dispatcher without dispatching a hook."""
+    return load_script(repo_root, "run_hook")

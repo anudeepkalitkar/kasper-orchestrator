@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from typing import IO
 import pytest
 
 import install
+from tests.helpers.git import git
 
 
 @pytest.fixture
@@ -103,4 +105,18 @@ def debate_project(
         )
 
     monkeypatch.setattr(debate.subprocess, "Popen", popen)
+    return tmp_path
+
+
+@pytest.fixture
+def checkpoint_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Create an offline feature branch with a baseline and no user Git hooks/config."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.invalid")
+    git(tmp_path, "init", "-b", "feat/test")
+    git(tmp_path, "config", "core.hooksPath", str(tmp_path / "no-hooks"))
+    git(tmp_path, "commit", "--allow-empty", "-m", "baseline")
     return tmp_path

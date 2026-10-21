@@ -6,6 +6,7 @@ disk — so the unit tier can use them without breaking its no-I/O rule.
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -142,3 +143,10 @@ def home_ledger() -> dict[str, Any]:
 def codex_seat(repo_root: Path) -> ModuleType:
     """Load the seat runner using the shared script import helper."""
     return load_script(repo_root, "codex_seat")
+
+
+@pytest.fixture
+def debate(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Load the debate script and restore its sibling-import path mutation afterwards."""
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    return load_script(repo_root, "debate")

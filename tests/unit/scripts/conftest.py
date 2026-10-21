@@ -1,5 +1,6 @@
 """In-memory collaborators for the seat runner's unit tests."""
 
+import io
 import sys
 from datetime import date
 from pathlib import Path
@@ -115,3 +116,48 @@ def model_route(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     module = load_script(repo_root, "model_route")
     monkeypatch.setattr(module.argparse, "_", lambda message: message)
     return module
+
+
+@pytest.fixture
+def debate_files(debate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict[Path, str]:
+    """Supply a wholly in-memory filesystem and frozen clock for debate execution."""
+    files = {Path("brief.md"): "Task brief"}
+    for name in ("propose", "critique", "judge", "architect", "researcher"):
+        files[debate.PROMPT_DIR / f"{name}.md"] = f"Contract {name}"
+    files[Path("/project/.claude/settings.json")] = '{"permissions":{"deny":["Read(secret)"]}}'
+
+    def read(path: Path, encoding: str = "utf-8") -> str:
+        if path not in files:
+            raise FileNotFoundError(str(path))
+        return files[path]
+
+    def write(path: Path, text: str, encoding: str = "utf-8") -> int:
+        files[path] = text
+        return len(text)
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        files.pop(path, None)
+
+    def stat(path: Path) -> SimpleNamespace:
+        if path not in files:
+            raise FileNotFoundError(str(path))
+        return SimpleNamespace(st_mtime=100.0)
+
+    monkeypatch.setattr(Path, "cwd", lambda: Path("/project"))
+    monkeypatch.setattr(Path, "home", lambda: Path("/home"))
+    monkeypatch.setattr(Path, "read_text", read)
+    monkeypatch.setattr(Path, "write_text", write)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "is_file", lambda p: p in files)
+    monkeypatch.setattr(Path, "is_dir", lambda p: p == Path("/project/.git"))
+    monkeypatch.setattr(Path, "mkdir", Mock())
+    monkeypatch.setattr(Path, "glob", lambda p, pattern: iter(()))
+    monkeypatch.setattr(Path, "open", lambda p, *a, **kw: io.StringIO())
+    monkeypatch.setattr(debate.argparse, "_", lambda message: message)
+    monkeypatch.setattr(debate.time, "time", lambda: 100.0)
+    monkeypatch.setattr(debate.shutil, "which", lambda name: f"/resolved/{name}")
+    monkeypatch.setattr(
+        debate.subprocess, "Popen", Mock(side_effect=AssertionError("unfaked child"))
+    )
+    return files

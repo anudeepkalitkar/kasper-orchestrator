@@ -1,8 +1,10 @@
 # Design: debate seats for the researcher and architect roles
 
-- **Status:** proposed design, 2026-10-14, revised the same day on the human's decisions and the
-  arch-reviewer's findings — not built
-- **ADR:** [ADR-0014](../adr/0014-debate-seats.md) (proposed)
+- **Status:** built 2026-10-14 (task 016). Proposed and revised the same day on the human's
+  decisions and the arch-reviewer's findings, then amended at build to match the code
+  (`.claude/scripts/debate.py`): the roster, the isolation value, and the developer's accepted
+  deviations
+- **ADR:** [ADR-0014](../adr/0014-debate-seats.md) (accepted)
 - **Scope:** `researcher` and `architect` only; Claude and Codex only; a seam for a third
   vendor is named, not built
 
@@ -40,7 +42,11 @@ The first draft's open questions were put to the human; the answers are now part
 2. **Critique round:** kept, and measured over the first three debates by the criterion in
    §Critique measurement; it stays or goes on that result.
 3. **Roster:** judge `claude:fable`, which never proposes; proposers two `claude:sonnet`, one
-   top-tier Codex model, two cheap-tier Codex models.
+   top-tier Codex model, two cheap-tier Codex models. **Amended at build (the human, 2026-10-14):**
+   the default proposers are one `codex:gpt-6-astra` and three `claude:sonnet` — the spike found
+   the lower GPT-6 tiers are not served on the Codex sign-in this setup uses (HTTP 400); only the
+   top tier answers. The one-top-plus-two-cheap split stays available as
+   an explicit `--seat` roster wherever a Codex sign-in serves those ids.
 4. **Rollout:** `architect` first.
 5. **Spend guard:** no per-debate permission prompt; `--max-calls` and the task-doc line.
 6. **Claude seat settings:** the saved sign-in (non-`--bare`) with limited settings. **Hook
@@ -56,7 +62,7 @@ The first draft's open questions were put to the human; the answers are now part
 | **Orchestration locus** | One script, `.claude/scripts/debate.py`, runs every call headless and hands KASPER one report — the `codex_seat.py` shape. Claude seats are `claude -p` calls on the CLI's saved sign-in. | KASPER driving rounds with batched Agent spawns and seat calls: at best three fan-out turns, but every proposal and critique (tens of thousands of tokens) lands in KASPER's context and is re-read on every later turn of the session; the script lets only the header and digest in. `claude --bare -p`: skips hooks but needs an API key — metered spend, the cost ADR-0009 removed. |
 | **Protocol** | Three fixed phases: propose (every proposer, independently, same brief) → critique (every surviving proposer reads all proposals, anonymised) → judge (one seat writes the answer with dissent recorded). Calls = 2·P + 1. No loop. | Open-ended rounds: no evidence they help; unbounded cost. Propose → judge only: the comparison arm of the measurement, not the default. |
 | **Judge** | Never proposes; `claude:fable`. For an `architect` debate a Codex judge is refused (exit 2): the arch-reviewer is Codex, and the author of the final answer must not share its vendor. | Codex judge: collides with the Codex reviewer. Judge also proposes: a judge grading its own entry. |
-| **Roster** | `claude:sonnet` ×2, `codex:<top>` ×1, `codex:<cheap>` ×2; judge `claude:fable`. `--seat vendor:model` (repeatable) replaces the proposer list; `--judge vendor:model` replaces the judge. | A roster file or env config: a knob nobody asked for. |
+| **Roster** | `codex:gpt-6-astra` ×1, `claude:sonnet` ×3 (amended at build, decision 3); judge `claude:fable`. `--seat vendor:model` (repeatable) replaces the proposer list; `--judge vendor:model` replaces the judge. | A roster file or env config: a knob nobody asked for. |
 | **Third vendor seam** | One `dict[str, Callable]` from vendor name to an argv-building function (`claude_argv`, `codex_argv`), plus one readiness function per vendor. Adding a vendor is one function and one entry. | A `Protocol`/ABC per vendor: single-implementation abstraction × 2. A universal wrapper CLI: a new dependency between KASPER and both vendors it already drives directly. |
 | **Inputs / outputs** | Brief in the seat-brief style; outputs under `<out>.d/`; fixed header lines the script (not a model) writes, on every path that passed pre-flight. | Letting the judge write the headers: `codex_seat.py` already learned that a seat's formatting is not a verdict (`read_gate_verdict`). |
 | **Sandbox** | Read-only for both roles: Codex `--sandbox read-only` with `features.multi_agent=false`; Claude `--permission-mode dontAsk --tools <read-only list> --setting-sources <isolated>` — no `Bash`, `Write`, `Edit`, or `Agent` — and a hook canary around every Claude call. | A write-enabled judge: decided against (decision 1). Accepting hook residue as a fallback: a hook (`project_dirs.py`) writes outside scratch — an envelope violation, not residue. |
@@ -91,31 +97,43 @@ CallResult  = NamedTuple(outcome: CallOutcome, detail: str)          # detail: m
 parse_seat(value: str) -> tuple[str, str]           # "vendor:model"; argparse type; unknown vendor → ArgumentTypeError
 default_proposers() -> list[tuple[str, str]]        # the constants below
 resolve_executables(vendors: set[str]) -> dict[str, Path]      # shutil.which per vendor; a miss is reported by the caller as exit 3
-vendor_ready(vendor: str, exe: Path) -> bool        # codex: `<exe> login status`; claude: `<exe> auth status`; both under READINESS_TIMEOUT_SECONDS
+vendor_ready(vendor: str, exe: Path, taskkill: Path | None = None) -> bool   # codex: `<exe> login status`; claude: `<exe> auth status`; past READINESS_TIMEOUT_SECONDS raises TimeoutExpired (group killed first); unlaunchable raises OSError
 load_deny_rules(home: Path, project: Path) -> list[str]        # permissions.deny from both settings.json files, verbatim; empty → caller exits 2
 build_prompt(phase, role, brief: Path, proposals: dict[str, str], critiques: dict[str, str], own: str | None) -> str
-claude_argv(exe: Path, seat: Seat, role: Role) -> list[str]
-codex_argv(exe: Path, seat: Seat, out: Path) -> list[str]
-VENDOR_ARGV: dict[str, ...] = {"claude": ..., "codex": ...}  # the third-vendor seam
-validate_output(text: str, phase: Phase, role: Role) -> str | None   # None when every mandatory section is present and non-empty, else the first offending heading
-run_call(argv, prompt, out, log, timeout, writes_out: bool) -> CallResult   # one headless call; prompt on stdin; process group; distinct outcomes
+claude_argv(exe: Path, seat: Seat, role: Role, out: Path, deny: Sequence[str] = ()) -> list[str]   # `out` unused
+codex_argv(exe: Path, seat: Seat, role: Role, out: Path, deny: Sequence[str] = ()) -> list[str]    # `role`, `deny` unused
+VENDOR_ARGV: dict[str, Callable[[Path, Seat, Role, Path, Sequence[str]], list[str]]]   # the third-vendor seam: one argv signature for every vendor
+validate_output(text: str, phase: Phase, role: Role, others: Sequence[str] = ()) -> str | None   # None when valid, else the first offending heading; `others` (critique only): labels needing a `### Seat <L>` line
+run_call(argv, prompt, out, log, timeout: int, writes_out: bool, validate: Callable[[str], str | None], taskkill: Path | None = None) -> CallResult   # one headless call; prompt on stdin; process group; distinct outcomes
 hook_canary_snapshot(project: Path) -> tuple[frozenset[str], float | None]  # names under claude-temp/sessions/ + mtime of .git/info/exclude
 hook_canary_tripped(before, after) -> bool          # pure comparison
-run_phase(phase, seats, ...) -> dict[str, CallResult]   # one lane per vendor, lanes concurrent (ThreadPoolExecutor); sequential inside a lane
+run_phase(phase, role, seats, prompts, others, seat_dir, exes, deny, timeout, taskkill, project, stop: threading.Event) -> dict[str, CallResult]   # one lane per vendor, lanes concurrent (ThreadPoolExecutor); sequential inside a lane; a canary trip sets `stop`
 write_report(out, role, status, seats, results, calls_made, calls_cap, reason: str | None, body: str) -> None
-run_debate(role, brief, out, proposers, judge, max_calls, timeout, dry_run) -> int
+preflight(role, brief, proposers, judge, max_calls, critique, dry_run, project) -> tuple[list[Seat], Seat, list[str]] | int   # pre-flight 1–2; an int is the exit code, nothing written
+phase_runner(role, results, seat_dir, exes, deny, timeout, taskkill, project, stop) -> PhaseCall   # closes run_phase over one run; records each phase into `results`
+propose_phase(call, role, brief, seats, seat_dir, stop) -> dict[str, str] | Outcome   # valid proposals by label, or failed (canary → 3, no quorum → 5)
+critique_phase(call, role, brief, seats, proposals, seat_dir, stop) -> dict[str, str] | Outcome   # valid critiques by label, or failed (canary → 3)
+judge_phase(call, role, brief, judge, proposals, critiques, seat_dir, stop) -> str | Outcome   # the answer, or failed (timeout → 4, any other non-ok → 5)
+run_phases(call, role, brief, seats, judge, results, seat_dir, stop, critique) -> Outcome   # propose → critique → judge; complete | degraded | failed; a seat-file OSError → failed, exit 2
+finish_report(out, role, seats, results, max_calls, seat_dir, outcome) -> int   # write_report, echo the head; a write failure → 2
+run_debate(role, brief, out, proposers, judge, max_calls, timeout, dry_run, critique: bool = True) -> int   # preflight → dry-run plan, or probe_out → readiness → run_phases → finish_report
 parse_args(argv) -> argparse.Namespace
 main(argv) -> int                                    # prints `out` last on every path, like codex_seat.main
 ```
 
 Constants: `DEFAULT_CLAUDE_PROPOSER = "sonnet"`, `DEFAULT_JUDGE = ("claude", "fable")`,
-`DEFAULT_CODEX_TOP`, `DEFAULT_CODEX_CHEAP` (the ids the vendor survey reports as the current top
-and cheap Codex tiers — **assumption**; the spike confirms them against the CLI),
-`DEFAULT_MAX_CALLS = 11`, `DEFAULT_TIMEOUT_SECONDS = 900`, `READINESS_TIMEOUT_SECONDS = 30`,
+`DEFAULT_CODEX_TOP = "gpt-6-astra"` (verified by the spike; there is no cheap-tier default —
+decision 3), `MTIME_SLACK_SECONDS = 2.0` (§`run_call`), `MAX_PROPOSERS = 26` (labels are single
+letters), `DEFAULT_MAX_CALLS = 9`, `DEFAULT_TIMEOUT_SECONDS = 900`, `READINESS_TIMEOUT_SECONDS = 30`,
 `QUORUM_PROPOSALS = 2`, `QUORUM_VENDORS = 2`, `ROLE_TOOLS = {"architect": "Read,Grep,Glob",
 "researcher": "WebSearch,WebFetch,Read"}`, `SEAT_DIR_SUFFIX = ".d"`,
-`CLAUDE_SETTING_SOURCES: str | None = None` (§Isolation — the build task sets it to the value the
-spike verified; `None` means debates are disabled), `REQUIRED_SECTIONS` (§Validation).
+`CLAUDE_SETTING_SOURCES: str | None = ""` (§Isolation — the value the spike verified; `None`
+would disable every debate with a Claude seat), `REQUIRED_SECTIONS` (§Validation). Type aliases:
+`Results` (phase → label → `CallResult`), `Outcome = tuple[Status, int, str | None, str]` (status,
+exit code, `REASON:`, body) and `PhaseCall` (one phase's runner, built by `phase_runner`). Beside
+the list sit small private helpers: `launch`, `kill_group`, `read_prompt_file`, `section_bodies`,
+`classify_output`, `seat_detail`, `failure_body`, `failed`, `probe_out`, `print_plan`,
+`readiness_failure`, `echo_report`.
 
 ## Data and flows
 
@@ -129,13 +147,19 @@ python3 .claude/scripts/debate.py researcher|architect --brief <brief.md> --out 
 
 Run from the project root, like `codex_seat.py`; a cwd without `.git` is refused (exit 2). `--brief`
 and `--out` are relative to it. `--dry-run` prints every planned call (`describe_argv` form, one
-per line, phase by phase) and writes nothing. `--no-critique` exists for the measurement in
+per line, phase by phase) and writes nothing. Each line is `[<phase> <label>]` (`[judge]` for the
+judge) and then the argv with an excerpt of the stdin prompt appended last — the prompt is shown
+there, never sent on argv. A dry run runs pre-flight steps 1–2 only: instead of the isolation
+refusal it prints a stderr note (and `--setting-sources '<unverified>'` while the constant is
+`None`), it still loads the deny rules (none → exit 2), it shows an unresolved CLI by its bare name
+with a stderr note, and it never probes `--out` or checks readiness. `--no-critique` exists for the measurement in
 §Critique measurement only and is removed by the task that closes it.
 
 ### Pre-flight (before any model call; nothing is written yet)
 
 1. cwd has `.git`; role/seat/judge arguments parse; `architect` with a `codex:` judge → exit 2;
-   roster calls `2·P + 1` (or `P + 1` with `--no-critique`) ≤ `--max-calls` → else exit 2.
+   a roster of 1–26 proposers whose calls `2·P + 1` (or `P + 1` with `--no-critique`) ≤
+   `--max-calls`, and every phase and role prompt plus the brief readable → else exit 2.
 2. `CLAUDE_SETTING_SOURCES is None` and any Claude seat in the roster → exit 2,
    "debates disabled: Claude seat isolation not verified". `load_deny_rules()` finds no
    `permissions.deny` entry in `~/.claude/settings.json` or the project's `.claude/settings.json`
@@ -146,9 +170,10 @@ per line, phase by phase) and writes nothing. `--no-critique` exists for the mea
    their `.log`s) so the directory holds only what this run writes. Any `OSError` → exit 2 with
    the path and error on stderr.
 4. `resolve_executables` for every vendor in the roster; `vendor_ready` for each with the
-   `READINESS_TIMEOUT_SECONDS` deadline. A miss, a non-zero status, or a readiness timeout → exit 3
-   naming the vendor, **report written** (`DEBATE: failed`, `REASON: vendor <name> not resolved |
-   not signed in | readiness timed out after 30s`). A vendor missing at pre-flight is never worked
+   `READINESS_TIMEOUT_SECONDS` deadline. A miss, a non-zero status, a readiness timeout, or a CLI
+   that cannot be launched (`vendor_ready` raises `TimeoutExpired` / `OSError`; the caller maps
+   them) → exit 3 naming the vendor, **report written** (`DEBATE: failed`, `REASON: vendor <name>
+   not resolved | not signed in | readiness timed out after 30s | not launchable: <error>`). A vendor missing at pre-flight is never worked
    around by a single-vendor debate: heterogeneity is the one thing the evidence says pays, and
    the fix (sign in) is cheap and the human's.
 
@@ -168,11 +193,11 @@ the exact files or sources to read, constraints, and the scratch path. It never 
 <phase file>                          .claude/debate/<phase>.md
 ## Role: <role>                       .claude/debate/<role>.md
 ## Brief                              the brief, verbatim
-## Proposals        (critique, judge) ### Seat A … ### Seat E — anonymised; the critic's own is marked "(yours)"
+## Proposals        (critique, judge) ### Seat A … ### Seat D — anonymised; the critic's own is marked "(yours)"
 ## Critiques        (judge only)      ### Seat A on the proposals …   (valid critiques only)
 ```
 
-Vendor and model names never appear inside a prompt; seats are `Seat A`…`Seat E` so a critic
+Vendor and model names never appear inside a prompt; seats are `Seat A`…`Seat D` (default roster) so a critic
 judges content, not provenance. The script appends the label → `vendor:model` mapping to the
 report after the judge has written.
 
@@ -180,27 +205,33 @@ report after the judge has written.
 
 | Vendor | argv (prompt on **stdin**, never argv; head is the `shutil.which`-resolved path) | Output |
 |---|---|---|
-| `codex` | `<codex> exec -c features.multi_agent=false --sandbox read-only -m <model> -o <out>` | final message at `<out>` (Codex writes it); stdout+stderr to `<out>.log` |
+| `codex` | `<codex> exec -c features.multi_agent=false --ephemeral --sandbox read-only -m <model> -o <out>` | final message at `<out>` (Codex writes it); stdout+stderr to `<out>.log` |
 | `claude` | `<claude> -p --model <model> --output-format text --permission-mode dontAsk --tools <ROLE_TOOLS[role]> --no-session-persistence --setting-sources <CLAUDE_SETTING_SOURCES> --disallowedTools <every permissions.deny rule, verbatim>` | stdout is the final message; the script writes it to `<out>`; stderr to `<out>.log` |
 
-Flags verified against the CLIs on this machine (`codex exec --help`: `-c`, `-m`, `-s read-only`,
+Flags verified against the CLIs on this machine (`codex exec --help`: `-c`, `-m`, `-s read-only`, `--ephemeral`,
 `-o`, prompt from stdin when no positional; `claude --help`: `-p`, `--model`, `--output-format`,
 `--permission-mode` with choice `dontAsk`, `--tools`, `--no-session-persistence`,
-`--setting-sources`, `--disallowedTools`). Whether `--disallowedTools` accepts permission-rule
-syntax such as `Read(~/.ssh/**)` is an **assumption** until the spike's denied-read check
-(§Isolation). What `dontAsk` does at runtime ("denies anything that would prompt") is the
-vendor survey's reading of the headless docs — **assumption** until the spike runs one call.
+`--setting-sources`, `--disallowedTools`). The spike (2026-10-14) settled
+the two runtime questions: `--disallowedTools` honours permission-rule syntax such as
+`Read(~/.ssh/**)`, and `dontAsk` denies what would prompt rather than hanging (§Verified).
+`--disallowedTools` comes last in the Claude argv because it takes a variadic list, and only when
+there are deny rules; `--ephemeral` was added to the Codex argv at build (§Isolation).
 
 ### `run_call` — the call contract
 
 Every call is a `subprocess.Popen` in its own process group (`start_new_session=True` on POSIX,
 `creationflags=CREATE_NEW_PROCESS_GROUP` on Windows), stdin = the prompt, stdout/stderr as the
-table says, driven by `communicate(input=prompt, timeout=timeout)`.
+table says, driven by `communicate(input=prompt, timeout=timeout)`. As built the signature is
+`run_call(argv, prompt, out, log, timeout, writes_out, validate, taskkill=None)`: `validate` is the
+seat's `validate_output` bound to its phase, role, and `others`, so `invalid` is decided inside the
+call, and `taskkill` is the Windows `taskkill` resolved once before the first call.
 
 **Fresh output per call.** Immediately before each call the script deletes that call's `<out>` and
 `<out>.log` (`unlink(missing_ok=True)` — the same move `codex_seat.py` makes before each run,
 `out.unlink(missing_ok=True)` at line 325) and records the call's start time. After the call, a
-file that is missing, blank, or whose mtime predates that start is `empty` — a Codex call that
+file that is missing, blank, or whose mtime is more than `MTIME_SLACK_SECONDS` (2 s) before that
+start is `empty` (the slack absorbs coarse filesystem mtimes, FAT's 2 s among them; it is safe
+because the file was deleted before the call) — a Codex call that
 exits 0 without writing can therefore never be certified by a file an earlier call or an earlier
 run left behind, and a reused `<out>.d/` can never supply a proposal, a critique, or an answer.
 
@@ -212,7 +243,7 @@ wins, so no combination is ambiguous:
 | 1 | `failed` | `Popen` raised `OSError` (not launchable) | the `OSError` text |
 | 2 | `timeout` | `communicate` raised `TimeoutExpired`; the **whole process group** was killed (`os.killpg(…, SIGKILL)` on POSIX; `<taskkill> /T /F /PID <pid>` via the resolved `taskkill` on Windows) and drained; partial transcript stays in `.log` | `"<timeout>s"` |
 | 3 | `failed` | exit code non-zero — **regardless of what the output file holds**; a seat that reports failure is not trusted on content | the exit code |
-| 4 | `empty` | exit 0, output file missing, whitespace-only, or not rewritten since the pre-call delete (mtime < call start) | `"no output"` / `"stale output"` |
+| 4 | `empty` | exit 0, output file missing, whitespace-only, or not rewritten since the pre-call delete (mtime < call start − 2 s) | `"no output"` / `"stale output"` |
 | 5 | `invalid` | exit 0, output present, `validate_output` named a missing, duplicated, or empty mandatory section | the heading |
 | 6 | `ok` | exit 0, fresh output, `validate_output` returned `None` | elapsed seconds |
 
@@ -229,7 +260,9 @@ running after the debate has moved on. The upper bound on wall-clock is therefor
 `validate_output` splits the text at lines beginning `## `, requires each heading in
 `REQUIRED_SECTIONS[phase]` (plus the role-specific one) to appear **exactly once** as a whole
 line, and requires at least one non-blank line in its body before the next `## ` heading.
-The first offending heading is the `detail`; checks run in table order.
+The first offending heading is the `detail`; checks run in table order. For a critique,
+`validate_output` also takes `others` — the labels of the other valid proposals — and requires a
+`### Seat <L>` line under `## Critique` for each, naming the first one missing.
 
 | Phase | Mandatory headings (exact lines) |
 |---|---|
@@ -257,13 +290,13 @@ sequenceDiagram
     D->>D: pre-flight 1–3 (args, isolation configured, out writable) → exit 2 on failure
     D->>D: pre-flight 4 (resolve + readiness, 30 s deadline) → exit 3 on failure
     par propose
-        D->>C: Seat A, Seat B (propose.md + role + brief)
-        D->>X: Seat C, Seat D, Seat E
+        D->>X: Seat A (propose.md + role + brief)
+        D->>C: Seat B, Seat C, Seat D
     end
     D->>D: canary tripped → failed/exit 3 · < 2 ok proposals or < 2 vendors → failed/exit 5
     par critique (ok proposers only; skipped with --no-critique)
-        D->>C: A, B read A…E
-        D->>X: C, D, E read A…E
+        D->>X: A reads A…D
+        D->>C: B, C, D read A…D
     end
     D->>C: judge (fable): judge.md + role + brief + ok proposals + ok critiques
     D->>D: judge timeout → failed/exit 4 · judge empty/invalid/failed → failed/exit 5
@@ -276,8 +309,8 @@ sequenceDiagram
 ```
 <scratch>/reports/<task>-debate.md          the report KASPER reads — always present after pre-flight
 <scratch>/reports/<task>-debate.md.d/       every seat's own output and transcript
-    propose-A.md  propose-A.md.log  …  propose-E.md
-    critique-A.md … critique-E.md
+    propose-A.md  propose-A.md.log  …  propose-D.md
+    critique-A.md … critique-D.md
     judge.md      judge.md.log
 ```
 
@@ -290,18 +323,19 @@ directory holds after a run is exactly what this run's calls wrote.
 ```
 DEBATE: complete | degraded | failed
 ROLE: architect
-SEATS: proposed 5/5 · critiqued 4/5 · judge claude:fable ok
-CALLS: 10/11
+SEATS: proposed 4/4 · critiqued 3/4 · judge claude:fable ok
+CALLS: 9/9
 REASON: <one line — present only when DEBATE: failed>
 
 <judge body — the mandatory sections above — or, when failed, the line "No answer: see REASON."
  and the list of seat files that do exist>
 
 ## Seats
-- A claude:sonnet — propose ok (212s) · critique ok (301s)
-- B claude:sonnet — propose ok · critique timeout (900s)
-- C codex:<top> — propose invalid (missing `## Risks and unknowns`) · critique not run
-- …
+- A codex:gpt-6-astra — propose ok (212s) · critique ok (301s)
+- B claude:sonnet — propose ok (180s) · critique timeout (900s)
+- C claude:sonnet — propose ok (195s) · critique ok (240s)
+- D claude:sonnet — propose invalid (missing `## Risks and unknowns`) · critique not run
+- judge claude:fable — ok (410s)
 ```
 
 The judge field of `SEATS:` is one of `ok | timeout | empty | invalid | failed | not run`.
@@ -315,8 +349,8 @@ pre-flight step 3; if writing the report itself raises `OSError` mid-run, the er
 |---|---|---|
 | 0 | complete | every seat `ok`, judge `ok` |
 | 1 | degraded | quorum met, judge `ok`, at least one proposer not `ok` in some phase — `## Seats` says which and why |
-| 2 | — (no report) or failed | bad arguments: unknown vendor, roster over `--max-calls`, `architect` with a `codex` judge, unreadable prompt/brief, cwd not a repository, `--out` unwritable, isolation not configured; or a report write failed mid-run |
-| 3 | failed | a vendor unusable: not on PATH, readiness non-zero or past its 30 s deadline (report written, `REASON: vendor <name> not resolved / not signed in / readiness timed out after 30s`); **or** the hook canary tripped after a Claude call (report written, `REASON: claude seat executed hooks — isolation broken`) |
+| 2 | — (no report) or failed | bad arguments: unknown vendor, roster over `--max-calls`, `architect` with a `codex` judge, unreadable prompt/brief, cwd not a repository, `--out` unwritable, isolation not configured, no `permissions.deny` rule to pass; or a seat file unreadable mid-run (`failed` report, `REASON: seat file error: …`); or a report write failed mid-run |
+| 3 | failed | a vendor unusable: not on PATH, readiness non-zero or past its 30 s deadline, or the CLI not launchable (report written, `REASON: vendor <name> not resolved / not signed in / readiness timed out after 30s / not launchable: <error>`); **or** the hook canary tripped after a Claude call (report written, `REASON: claude seat executed hooks — isolation broken`) |
 | 4 | failed | the judge call timed out and its process group was killed — proposals and critiques stay on disk |
 | 5 | failed | quorum not met after propose (`REASON: <n> valid proposals from <m> vendors`), or the judge outcome was `empty`, `invalid` (`REASON: judge output missing <heading>`) or `failed` |
 
@@ -327,7 +361,8 @@ pre-flight step 3; if writing the report itself raises `OSError` mid-run, the er
   Nothing is retried — a retry into a rate-limited pool is the hang this design forbids.
 - A **critic** with any outcome other than `ok` keeps its proposal in the judge's inputs; only its
   critique is absent. Status becomes `degraded`.
-- **Quorum** is two `ok` proposals from two vendors. Below it there is no debate to judge: exit 5,
+- **Quorum** is two `ok` proposals from two vendors. On the default roster the one Codex seat is
+  the only second vendor, so losing it alone ends the debate at exit 5. Below it there is no debate to judge: exit 5,
   report written with `REASON:`, no critique or judge call made. KASPER takes the single-agent
   path for the role.
 - The **judge** is the one call with no substitute: `timeout` → exit 4; `empty`/`invalid`/`failed`
@@ -349,7 +384,7 @@ seat that executes hooks is therefore not residue to accept; it is an envelope v
 design makes isolation a precondition in three layers:
 
 1. **Configured.** `CLAUDE_SETTING_SOURCES` is the `--setting-sources` value under which no hook
-   runs. It ships as `None`; the **spike** finds the value (candidates: an empty list, or a source
+   runs. It stays `None` until verified; the **spike** finds the value (candidates: an empty list, or a source
    set that excludes both the user and project settings files) and the build task sets the
    constant only once the spike has shown, for one real `claude -p` call from this project root:
    no new entry under `claude-temp/sessions/`, `.git/info/exclude` unchanged (mtime and content),
@@ -360,12 +395,22 @@ design makes isolation a precondition in three layers:
    transcript must show that read refused. If no value achieves all four, the constant stays
    `None`, pre-flight step 2 refuses every roster with a Claude seat, and **debates stay disabled**
    — the human decided this explicitly.
+
+   **Found, 2026-10-14** (task 016 spike; claude 2.1.299, codex-cli 0.154.0):
+   **`CLAUDE_SETTING_SOURCES = ""`**. One real `claude -p` call under `--setting-sources ""` passed
+   all four checks: no new `claude-temp/sessions/` entry, `.git/info/exclude` unchanged, the home
+   project record unchanged (mtime and entry names), and the canary read under `~/.ssh` refused
+   with the rule-attributed error ("denied by your permission settings"). `local` also passed and
+   was rejected: it would load a future `.claude/settings.local.json`, and that file can carry
+   hooks. Two limits of the evidence: the deny rule matches by path, so the refusal does not show
+   that the canary file was in place; and no negative control (default sources) was run, because
+   the SessionStart hook would have written outside scratch.
 2. **Checked at runtime.** `hook_canary_snapshot` before each Claude call and after it;
    `hook_canary_tripped` compares the `claude-temp/sessions/` name set and the exclude file's
    mtime. A trip is terminal (exit 3) — the configured value has stopped working (a CLI update,
    a settings change) and the script must not make the next call.
-3. **Recorded.** The spike's evidence (the value, the three checks, the CLI version) goes in the
-   build task's doc and in a comment beside the constant, so the next CLI version is re-verified
+3. **Recorded.** The spike's evidence (the value, the four checks, the CLI version) goes in the
+   build task's doc and in a comment beside the constant — done at build, so the next CLI version is re-verified
    deliberately, not discovered by a canary trip mid-debate.
 
 4. **Denies travel with the seat.** Narrowing `--setting-sources` drops not only the hooks but the
@@ -377,11 +422,15 @@ design makes isolation a precondition in three layers:
    same list the session does without a second copy that could drift. Rules for tools the seat does
    not have (`Bash(…)`) are harmless passengers. The spike's denied-read check (point 1) is what
    proves the flag honours rule syntax before any seat is enabled.
+5. **No session residue.** Each Claude call carries `--no-session-persistence` and each Codex call
+   `--ephemeral` ("run without persisting session files to disk"), so neither CLI keeps the seat's
+   session. Whether Codex writes anything else under its home (logs) was not inspected.
 
 What `--setting-sources` does to CLAUDE.md and auto-memory loading is recorded by the spike but
 is not part of the precondition: those are reads into a seat's context, the seat's output stays in
-local scratch, and the author of record (the architect agent) writes `docs/`. The spike notes
-whether the chosen value also drops them.
+local scratch, and the author of record (the architect agent) writes `docs/`. Under `""` the spike
+found CLAUDE.md not loaded (both files dropped) and the home auto-memory index loaded — a read of
+`~/.claude/projects/<slug>/memory/` into the seat's context; no write was observed.
 
 ## Trigger — the paragraph the build task adds to SKILL.md step 3
 
@@ -425,7 +474,7 @@ defaults are constants at the top of `debate.py`; changing a default is a code c
 table in this spec mirrored in the same commit, as `model_route.py` does with its rule.
 `--no-critique` is temporary (§Critique measurement).
 
-## Critique measurement — how the five critique calls earn their place
+## Critique measurement — how the critique calls earn their place
 
 The evidence says rounds may not help; the human kept the round on condition that it is measured.
 Over the **first three architect debates**:
@@ -438,12 +487,12 @@ Over the **first three architect debates**:
    shape), judging each against the code and the rules as it would a design.
 3. **Criterion:** the critique round **stays** if, in at least two of the three debates, the
    with-critique answer has strictly fewer `P1 + P2` findings than the without-critique answer. A
-   tie in a debate counts against the round (it cost five calls and changed nothing the reviewer
+   tie in a debate counts against the round (it cost P calls — four on the default roster — and changed nothing the reviewer
    could see). Otherwise the round **goes**: the critique phase and `--no-critique` are deleted,
    the protocol becomes propose → judge, and this spec and ADR-0014 are amended in that commit.
    If the round stays, `--no-critique` is deleted and the judge's `## Critique effect` remains the
    standing record of what the round contributed.
-4. Cost of the measurement: three extra propose-only runs (6 calls each) and three reviewer seat
+4. Cost of the measurement: three extra propose-only runs (P + 1 calls each — five on the default roster) and three reviewer seat
    calls, recorded in the task doc like any debate.
 
 The reviewer is Codex and the judge is Claude, so the measurement never asks a vendor to grade
@@ -451,15 +500,17 @@ its own answer.
 
 ## Cost
 
-- Calls per debate: `2·P + 1`; default roster P = 5 → **11 calls**: 5 Claude (2 Sonnets × propose
-  and critique, plus the Fable judge) and 6 Codex (3 seats × two phases). `--max-calls` (default
-  11) is checked before the first call; a roster that would exceed it is exit 2. KASPER lowers it
-  to shrink a debate (`--max-calls 7` fits P = 3) and names the roster accordingly.
+- Calls per debate: `2·P + 1`; default roster P = 4 → **9 calls**: 7 Claude (3 Sonnets × propose
+  and critique, plus the Fable judge) and 2 Codex (1 seat × two phases). `--max-calls` (default
+  9) is checked before the first call; a roster that would exceed it is exit 2. KASPER lowers it
+  to shrink a debate (`--max-calls 7` fits P = 3) and names the roster accordingly; a larger
+  explicit roster needs a raised cap. The Claude lane is the long one: seven sequential calls, so
+  the wall-clock bound is `7 × --timeout` plus readiness.
 - Both vendors' calls draw on the CLIs' saved sign-ins, the same pools the Codex seats and
   KASPER's own session already use — the Claude seats share **KASPER's** pool. One lane per vendor
   keeps the burst to one call at a time per pool.
 - **Task doc, one line per debate**, copied from the header:
-  `- debate(architect): 5 proposers (2 claude, 3 codex) · judge claude:fable · CALLS 10/11 · DEBATE: degraded · <report path>`
+  `- debate(architect): 4 proposers (3 claude, 1 codex) · judge claude:fable · CALLS 9/9 · DEBATE: degraded · <report path>`
 - The pricing and rate-pool reasoning is deliberately not here (public repo, ADR-0003): it is in
   the session scratch report `claude-temp/sessions/c5a3943f-469f-48e5-aa32-d3c9366c65e0/reports/015-researcher-multi-vendor.md`, local-only.
 
@@ -471,7 +522,7 @@ Both CLIs run on Windows. The script must:
   pre-flight**, and run the resolved paths everywhere — readiness checks, seat calls, and the
   timeout kill alike. npm installs `.cmd` shims there, and `CreateProcess` does not apply
   `PATHEXT` the way a shell does; never `shell=True`;
-- pass prompts on **stdin**: a critique prompt carrying five proposals is far past Windows' 32,767-
+- pass prompts on **stdin**: a critique prompt carrying every proposal is far past Windows' 32,767-
   character command-line limit;
 - start every call in its own process group and kill the group on timeout (`taskkill /T /F` on
   Windows, `os.killpg` elsewhere) — a `.cmd` shim killed alone leaves node running;
@@ -506,29 +557,41 @@ on Windows has been run by a human since the port (known debt).
 
 ## Rollout
 
-1. **Spike** (python-developer, `--dry-run` + one real call per vendor): find and record the
-   `--setting-sources` value that passes the three isolation checks (§Isolation) — **no value, no
+1. **Spike** — **done 2026-10-14** (task 016; results in §Isolation and §Verified). (python-developer, `--dry-run` + one real call per vendor): find and record the
+   `--setting-sources` value that passes the four isolation checks (§Isolation) — **no value, no
    debates**; confirm the Codex model ids; confirm `codex exec` with the prompt on stdin and `-o`
    behaves as `codex_seat` expects; confirm what `claude -p … --permission-mode dontAsk` does when
    a tool would prompt; confirm the group kill leaves no `node` process behind on this machine.
 2. **`architect` debates** go live (decision 4). The architect agent authors from the report; the
    arch-reviewer judges as today. The first three run the measurement (§Critique measurement).
-3. **`researcher` debates** once Codex web search in `exec` is confirmed; until then a researcher
+3. **`researcher` debates** — **still waiting**: `codex exec --help` (codex-cli 0.154.0) lists
+   no web-search flag and names no config key for one. Enabled once Codex web search in `exec` is
+   confirmed; until then a researcher
    debate's Codex seats would argue from memory while the Claude seats fetch sources.
 4. Docs in the same change: SKILL.md (§Trigger paragraph), the delegation rule, both CLAUDE.md
    twins, and `install.py`'s owned path.
 
-## Assumptions (unverified by this design — stated so a reviewer can check them)
+## Verified 2026-10-14 (task 016 spike; claude 2.1.299, codex-cli 0.154.0)
 
-- The Codex model ids and tiers are those the 2026-10-14 vendor survey reports; the CLI's `-m`
-  accepts them.
-- `--permission-mode dontAsk` denies rather than hangs when a tool would prompt (survey reading).
-- `claude -p --output-format text` writes only the final message to stdout.
+- **Codex model ids:** `gpt-6-astra` answered on this machine's Codex sign-in; `gpt-6.1-sol`,
+  `gpt-6-sol` and `gpt-6-luna` returned HTTP 400 — the lower GPT-6 tiers are not served on the
+  Codex sign-in this setup uses; only the top tier answers. Other Codex auth is untested.
+- **`dontAsk`:** a tool use that would prompt is denied without hanging (a `touch` through `Bash`
+  was refused, exit 0). `dontAsk` alone also refuses reads outside the working directory.
+- **`codex exec`:** reads the prompt from stdin when no positional is given; the `-o` file holds
+  only the final message; the header and transcript go to stderr.
+- **`--disallowedTools` rule syntax:** honoured in both relative (`Read(./README.md)`) and `~`
+  (`Read(~/.ssh/**)`) forms; its refusal is told apart from a `dontAsk` refusal by the error text.
+- **Group kill:** `os.killpg` on a child started with `start_new_session=True` also killed its
+  grandchild — tested with a Python child and a `sleep` grandchild, not the CLIs' node processes.
+- **Hook isolation:** `--setting-sources ""` drops every hook and keeps the saved sign-in
+  (§Isolation).
+
+## Assumptions (still unverified — stated so a reviewer can check them)
+
+- `claude -p --output-format text` writes only the final message to stdout (the spike ran
+  `--output-format json` to capture the denials).
 - `codex exec` can reach the web from `exec` via a config key; no flag appears in `--help`.
-- Some `--setting-sources` value drops every hook while keeping the saved sign-in. **Not assumed
-  true** — it is the spike's precondition; if false, debates stay disabled.
-- `--disallowedTools` accepts the permission-rule syntax `permissions.deny` uses (`Read(~/.ssh/**)`)
-  — proved or disproved by the spike's denied-read check; disproved means debates stay disabled.
 - npm's Windows shims for both CLIs are `.cmd` files `shutil.which` resolves, and `taskkill /T`
   reaches the node process behind a shim.
 

@@ -43,6 +43,16 @@ once per task, the third on a design before it is built.
    **arch-reviewer seat** judges it, then the developer implements — with the reviewed spec named
    in that developer's brief. Small, obvious changes skip it. The architect is docs-only, and its
    open questions come back to you to put to the human.
+   **Debate only when the question is contested — never by default.** Before an `architect`
+   spawn (and a `researcher` spawn once that role is enabled), run a debate —
+   `python3 .claude/scripts/debate.py <role> --brief <file> --out <scratch>/reports/<task>-debate.md`
+   — only when at least **two** of these hold: you can name two or more plausible answers a
+   competent engineer would defend; the decision is hard to reverse (it would get an ADR); a
+   previous single-agent answer to this question was rejected by the human or drew a P1 from a
+   seat; the human asked for a debate. Never debate a one-file obvious design, a lookup with one
+   authoritative source, or a follow-up to a debate already run on the same question. Pass the
+   report path as the primary input of the spawn that follows; copy the report's header line into
+   the task doc; a `DEBATE: failed` report means the single-agent path, not a retry.
 4. **The chain is law:** human → you → agents. Agents cannot talk to each other; anything
    cross-discipline routes back through you. They also **cannot ask the human anything** —
    an agent that hits a genuine fork stops and reports the question. You put it to the

@@ -88,7 +88,11 @@ gate, the reviewer seat judges the diff; the arch-reviewer seat judges a design 
 ADR before any of it is built. The tester's report opens `GATE: green` or
 `GATE: red`; the script exits 0 green · 1 red · 2 bad arguments · 3 Codex not signed in (the
 human runs `codex login`) · 4 timeout · 5 no verdict. Owner ≠ verifier now also means
-vendor ≠ vendor.
+vendor ≠ vendor. When KASPER judges a question contested (the trigger in the skill's step 3),
+`python3 .claude/scripts/debate.py architect --brief <file> --out <file>`
+([debate.py](.claude/scripts/debate.py), prompts in [debate/](.claude/debate/)) runs a Claude +
+Codex debate — propose → anonymised critique → Fable judge — and hands KASPER one report; the
+architect agent then authors `docs/design/` from it and the arch-reviewer seat judges as before.
 
 ## Skills ([skills/](.claude/skills/))
 
@@ -129,9 +133,10 @@ Every hook command runs through one dispatcher —
   `notify.wav` as the fallback).
 - Command helpers: [git_checkpoint.py](.claude/scripts/git_checkpoint.py) (backs
   `/checkpoint`) · [new_task.py](.claude/scripts/new_task.py) (backs `/new-task`). Beside them,
-  [codex_seat.py](.claude/scripts/codex_seat.py) runs a Codex verification seat and
+  [codex_seat.py](.claude/scripts/codex_seat.py) runs a Codex verification seat,
+  [debate.py](.claude/scripts/debate.py) runs a contested question's debate, and
   [model_route.py](.claude/scripts/model_route.py) picks the model tier for one spawn (it backs
-  the routing step) — KASPER calls both directly; neither is a hook.
+  the routing step) — KASPER calls all three directly; none is a hook.
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
   shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
   never those.
@@ -139,7 +144,8 @@ Every hook command runs through one dispatcher —
 ## Where things are
 
 What this repo holds: the config under [.claude/](.claude/) — including the Codex seat
-prompts in [.claude/codex/](.claude/codex/), the eighth path `install.py` owns — this file,
+prompts in [.claude/codex/](.claude/codex/) and the debate prompts in
+[.claude/debate/](.claude/debate/), the eighth and ninth paths `install.py` owns — this file,
 [README.md](README.md), and the installer [install.py](install.py) with its `tests/` and
 `pyproject.toml`. This repo is **public**, so its decision record in `docs/adr/` stays local, as
 do the task records in `tasks/` — never committed, so a clone carries neither. (In a private repo

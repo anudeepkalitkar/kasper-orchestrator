@@ -4,9 +4,15 @@
 Implements the Task Documentation rule: every task gets a living doc named
 ``tasks/<NNN>-<slug>.md`` created from the standard template.
 
+The title comes from the first argument, or from stdin when no argument is given — the
+``/new-task`` command passes it through a quoted heredoc so no shell ever parses it.
+
 Usage:
     python new_task.py "Build the upload service"
     python new_task.py "Build the upload service" --tasks-dir /path/to/tasks
+    python new_task.py <<'EOF'
+    Build the "upload" service
+    EOF
 """
 
 from __future__ import annotations
@@ -76,7 +82,15 @@ class TaskDocScaffolder:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Scaffold a new task document.")
-    parser.add_argument("title", help="Human-readable task title.")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
+        "title", nargs="?", help="Human-readable task title; read from stdin when omitted."
+    )
+    source.add_argument(
+        "--title-file",
+        type=Path,
+        help="Read the task title from this file (how /new-task passes it).",
+    )
     parser.add_argument(
         "--tasks-dir",
         type=Path,
@@ -86,11 +100,41 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def resolve_title(title: str | None, title_file: Path | None = None) -> str | None:
+    """The task title: the argument, else the ``--title-file`` contents, else stdin.
+
+    The file form exists so arbitrary text never passes through shell syntax at all.
+
+    Args:
+        title: The positional argument, or None when it was omitted.
+        title_file: The ``--title-file`` path, or None when it was omitted.
+
+    Returns:
+        The stripped title, or None when it is empty or stdin is an interactive terminal.
+
+    Raises:
+        OSError: When ``title_file`` cannot be read.
+    """
+    if title is None and title_file is not None:
+        title = title_file.read_text(encoding="utf-8")
+    if title is None:
+        title = "" if sys.stdin.isatty() else sys.stdin.read()
+    return title.strip() or None
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    try:
+        title = resolve_title(args.title, args.title_file)
+    except OSError as exc:
+        print(f"Cannot read the task title file: {exc}", file=sys.stderr)
+        return 2
+    if title is None:
+        print("A task title is required (argument, --title-file, or stdin).", file=sys.stderr)
+        return 2
     scaffolder = TaskDocScaffolder(args.tasks_dir, datetime.date.today())
     try:
-        path = scaffolder.create(args.title)
+        path = scaffolder.create(title)
     except FileExistsError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -124,23 +124,51 @@ RISK_WORDS: tuple[str, ...] = (
 RISK_POINTS = 2
 RISK_CAP = 6
 
-#: A phrase is not counted when one of these words sits in its own sentence within
-#: ``NEGATION_WINDOW_CHARS`` characters to its left ("do not delete", "never touch the ledger").
-NEGATION_WORDS: tuple[str, ...] = (
-    "not",
-    "never",
-    "no",
-    "without",
-    "avoid",
-    "cannot",
-    "don't",
-    "doesn't",
-    "won't",
+#: Outside the risk list (risk words are never discounted), a phrase is not counted only
+#: inside an explicit exclusion: a prohibition, then an action verb, then (within
+#: ``EXCLUSION_OBJECT_WORDS`` words) the phrase as that verb's object, all in one clause —
+#: "never touch the ambiguity word". Anything looser ("no downtime change", "avoid flaky")
+#: describes real work, and routing errs expensive.
+PROHIBITIONS: tuple[str, ...] = ("do not", "don't", "never", "must not", "mustn't")
+#: The verbs an exclusion forbids. A risk word that is itself the verb ("never delete files")
+#: stays counted — it names the risky act rather than excluding one.
+EXCLUSION_VERBS: tuple[str, ...] = ("touch", "edit", "change", "modify", "delete", "write", "run")
+#: Words allowed between the verb and the phrase ("do not edit the shared auth module").
+EXCLUSION_OBJECT_WORDS = 4
+#: Clause ends that stop an exclusion from reaching a later phrase.
+CLAUSE_END = re.compile(r"[.!?;:,\n]")
+#: Conjunctions and sequencers that start new work, so they end an exclusion's object span:
+#: "do not edit docs and implement the migration" still counts the migration.
+SPAN_CONJUNCTIONS: tuple[str, ...] = ("and", "or", "but", "then", "also", "plus", "so", "while")
+#: Action verbs beyond the scored lists that likewise start new work inside a clause.
+ACTION_VERBS: tuple[str, ...] = (
+    "add",
+    "implement",
+    "build",
+    "update",
+    "remove",
+    "refactor",
+    "migrate",
+    "make",
+    "use",
 )
-NEGATION_WINDOW_CHARS = 40
-#: Sentence ends that stop a negation from reaching a later phrase.
-SENTENCE_END = re.compile(r"[.!?\n]")
-_NEGATION = re.compile(r"\b(?:" + "|".join(map(re.escape, NEGATION_WORDS)) + r")(?![\w'])", re.I)
+#: Any of these inside the object span ends the exclusion, keeping the phrase's score: the
+#: conjunctions, every exclusion and action verb, and every word of the novelty, routine and
+#: ambiguity lists — a stray noun among them only errs expensive.
+SPAN_STOP_WORDS: frozenset[str] = frozenset(SPAN_CONJUNCTIONS + EXCLUSION_VERBS + ACTION_VERBS) | {
+    word for phrase in NOVELTY_WORDS + ROUTINE_WORDS + AMBIGUITY_WORDS for word in phrase.split()
+}
+
+
+def _alternation(words: tuple[str, ...]) -> str:
+    """A regex alternation of ``words``; spaces match any whitespace, ``'`` either apostrophe."""
+    return "|".join(re.escape(w).replace(r"\ ", r"\s+").replace("'", "['’]") for w in words)
+
+
+_PROHIBITED_VERB = re.compile(
+    rf"\b(?:{_alternation(PROHIBITIONS)})\s+(?:{_alternation(EXCLUSION_VERBS)})\b",
+    re.IGNORECASE,
+)
 
 #: (floor, ceiling) per agent; an agent not listed gets ``DEFAULT_BOUNDS``.
 DEFAULT_BOUNDS: tuple[Tier, Tier] = ("haiku", "fable")
@@ -181,32 +209,46 @@ def count_paths(text: str) -> int:
     return len(paths)
 
 
-def _is_negated(text: str, start: int) -> bool:
-    """Say whether a negation word precedes ``start`` in the same sentence, nearby.
+def _is_excluded(text: str, start: int) -> bool:
+    """Say whether the phrase at ``start`` is the object of an explicit exclusion.
 
     Args:
         text: The brief.
         start: Index where the matched phrase begins.
 
     Returns:
-        True when a :data:`NEGATION_WORDS` entry lies within :data:`NEGATION_WINDOW_CHARS`
-        characters to the left with no sentence end between it and the phrase.
+        True when the phrase's clause, up to ``start``, holds a :data:`PROHIBITIONS` entry and
+        an :data:`EXCLUSION_VERBS` entry, followed by at most :data:`EXCLUSION_OBJECT_WORDS`
+        words, none of them in :data:`SPAN_STOP_WORDS`, then whitespace. Anything else keeps
+        the score — routing errs expensive.
     """
-    left = text[max(0, start - NEGATION_WINDOW_CHARS) : start]
-    sentence = SENTENCE_END.split(left)[-1]
-    return _NEGATION.search(sentence) is not None
+    clause = CLAUSE_END.split(text[:start])[-1]
+    # The exclusion nearest the phrase is the only one that can govern it.
+    last = next(reversed(list(_PROHIBITED_VERB.finditer(clause))), None)
+    if last is None:
+        return False
+    tail = clause[last.end() :]
+    span = [word.strip(TOKEN_TRIM).lower() for word in tail.split()]
+    return (
+        tail[-1:].isspace()
+        and len(span) <= EXCLUSION_OBJECT_WORDS
+        and not SPAN_STOP_WORDS.intersection(span)
+    )
 
 
-def count_phrases(text: str, phrases: tuple[str, ...]) -> int:
-    """Count how many distinct phrases occur un-negated in the text, each at most once.
+def count_phrases(text: str, phrases: tuple[str, ...], *, honor_exclusions: bool = True) -> int:
+    """Count how many distinct phrases occur in the text, each at most once.
 
     Matching is case-insensitive on word boundaries, so ``async`` does not match
-    ``asyncio`` and a phrase repeated ten times still counts once. A match with a
-    negation word just before it in the same sentence is skipped.
+    ``asyncio`` and a phrase repeated ten times still counts once. A match that is the
+    object of an explicit exclusion (:func:`_is_excluded`) is skipped unless
+    ``honor_exclusions`` is false.
 
     Args:
         text: The brief.
         phrases: The phrases to look for; multi-word phrases match any whitespace run.
+        honor_exclusions: Whether an excluded match is skipped. Risk words pass False: a
+            prohibition still names the risky area, so risk is never discounted.
 
     Returns:
         The number of phrases found.
@@ -215,7 +257,7 @@ def count_phrases(text: str, phrases: tuple[str, ...]) -> int:
         1
         for phrase in phrases
         if any(
-            not _is_negated(text, match.start())
+            not (honor_exclusions and _is_excluded(text, match.start()))
             for match in re.finditer(
                 rf"\b{r'\s+'.join(map(re.escape, phrase.split()))}\b", text, re.IGNORECASE
             )
@@ -264,7 +306,7 @@ def score_brief(text: str) -> Scores:
     size = size_points(text)
     novelty = novelty_points(text)
     ambiguity = min(count_phrases(text, AMBIGUITY_WORDS) * AMBIGUITY_POINTS, AMBIGUITY_CAP)
-    risk = min(count_phrases(text, RISK_WORDS) * RISK_POINTS, RISK_CAP)
+    risk = min(count_phrases(text, RISK_WORDS, honor_exclusions=False) * RISK_POINTS, RISK_CAP)
     return Scores(size, novelty, ambiguity, risk, max(0, size + novelty + ambiguity + risk))
 
 

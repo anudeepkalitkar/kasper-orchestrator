@@ -5,7 +5,7 @@ The tester, code-reviewer, and architecture-reviewer seats are not Claude subage
 KASPER invokes this script as a single Bash call, and Codex does the work headless.
 
 - ``tester`` authors tests and runs the gate (workspace-write sandbox; ``GATE:`` verdict).
-- ``reviewer`` judges the diff with ``codex exec review``; its findings are data.
+- ``reviewer`` judges the diff read-only with plain ``codex exec``; its findings are data.
 - ``arch-reviewer`` judges a design document read-only with plain ``codex exec``.
 
 The seat's discipline lives in ``.claude/codex/<seat>.md``; the task-specific brief is a
@@ -161,9 +161,10 @@ def codex_argv(seat: Seat, out: Path, prompt: str, codex: str = "codex") -> list
     """Return the Codex command line for a seat.
 
     The tester needs ``--sandbox workspace-write`` (it writes tests and the gate
-    writes caches); the reviewer runs ``codex exec review`` in its free-text form,
-    which is the only shape that accepts our rules as a prompt; the arch-reviewer
-    judges a design document, not a diff, so it runs plain ``codex exec`` read-only.
+    writes caches). The reviewer and the arch-reviewer run plain ``codex exec`` read-only:
+    ``codex exec review`` imposes its own JSON output contract over the prompt's, so the
+    reviewer's ``REVIEW:`` first line would never appear and every review would read as no
+    verdict. Plain ``exec`` keeps each role prompt's contract — the one the parser reads.
     Every form pins ``features.multi_agent=false`` so a seat can never spawn Codex
     sub-threads — chain law is one hop.
 
@@ -188,9 +189,7 @@ def codex_argv(seat: Seat, out: Path, prompt: str, codex: str = "codex") -> list
             str(out),
             prompt,
         ]
-    if seat == "arch-reviewer":
-        return [codex, "exec", *NO_SUBAGENTS, "--sandbox", "read-only", "-o", str(out), prompt]
-    return [codex, "exec", "review", *NO_SUBAGENTS, "-o", str(out), prompt]
+    return [codex, "exec", *NO_SUBAGENTS, "--sandbox", "read-only", "-o", str(out), prompt]
 
 
 def is_logged_in(codex: str = "codex") -> bool:

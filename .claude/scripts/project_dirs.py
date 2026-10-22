@@ -44,6 +44,9 @@ ADR_ENTRY: str = "/docs/adr/"
 #: Seconds the visibility lookup may take before the hook falls back to "not private".
 VISIBILITY_TIMEOUT_S: float = 5.0
 
+#: Seconds the git top-level lookup may take before the payload's ``cwd`` is used as is.
+GIT_TIMEOUT_S: float = 5.0
+
 #: The scratch root, and the container inside it this hook gives each session.
 SCRATCH_DIR: str = "claude-temp"
 SESSIONS_DIR: str = "sessions"
@@ -56,6 +59,37 @@ _HEADER_LINE: re.Pattern[str] = re.compile(r"^(overnight|session|until):\s*(\S+)
 
 #: The infix a clashing harness memory file is renamed with, so nothing is overwritten (S3).
 HARNESS_BACKUP_INFIX: str = ".from-harness"
+
+
+def project_root(cwd: object) -> Path:
+    """Resolve the session's stable project root.
+
+    The payload's ``cwd`` follows the session into a package or worktree (a compact or resume
+    re-fires SessionStart there), so it is the fallback, never the first choice.
+
+    Args:
+        cwd: The payload's ``cwd``; the process's own when absent.
+
+    Returns:
+        ``$CLAUDE_PROJECT_DIR`` when set, else the git top level of ``cwd``, else ``cwd``.
+    """
+    project = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project:
+        return Path(project)
+    start = Path(cwd) if isinstance(cwd, str) and cwd else Path.cwd()
+    try:
+        done = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return start
+    top = done.stdout.strip()
+    return Path(top) if top else start
 
 
 def _exclude_file(root: Path) -> Path | None:
@@ -384,7 +418,7 @@ def main() -> None:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         data = {}
-    root = Path(data.get("cwd") or Path.cwd()).resolve()
+    root = project_root(data.get("cwd")).resolve()
     if root == (Path.home() / ".claude").resolve():
         return  # summoned inside the global config itself — nothing to wire
     mem = root / "claude-memory"

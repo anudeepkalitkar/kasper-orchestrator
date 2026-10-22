@@ -174,7 +174,9 @@ def branch_refusal() -> str | None:
     current = _git("branch", "--show-current").stdout.strip()
     if current != main_branch:
         return f"not on the mainline: on '{current or 'detached HEAD'}', expected '{main_branch}'"
-    if _git("status", "--porcelain").stdout.strip():
+    # Untracked files count as dirt regardless of status.showUntrackedFiles; --no-renames keeps
+    # both sides of a rename in the listing.
+    if _git("status", "--porcelain", "--untracked-files=all", "--no-renames").stdout.strip():
         return "dirty baseline: the working tree has uncommitted changes"
     if _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}").returncode != 0:
         print(f"note: '{main_branch}' has no upstream; nothing to be behind.", file=sys.stderr)

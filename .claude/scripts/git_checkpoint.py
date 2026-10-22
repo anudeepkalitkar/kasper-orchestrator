@@ -106,7 +106,7 @@ class GitCheckpoint:
         return self._run(["branch", "--show-current"], capture=True)
 
     def has_changes(self) -> bool:
-        return bool(self._run(["status", "--porcelain"], capture=True))
+        return bool(self._run(["status", "--porcelain", "--untracked-files=all"], capture=True))
 
     def adr_local(self) -> bool:
         """Whether ``docs/adr/`` is local-only here; an unanswerable question refuses it."""
@@ -119,8 +119,12 @@ class GitCheckpoint:
         return [path for path in listing.split("\0") if path]
 
     def staged_paths(self) -> list[str]:
-        """The paths currently in the index that differ from HEAD."""
-        return self._paths(["diff", "--cached", "--name-only"])
+        """The paths currently in the index that differ from HEAD.
+
+        ``--no-renames`` lists both sides of a rename or copy: rename detection would hide the
+        source path, letting a scoped checkpoint commit an undeclared deletion.
+        """
+        return self._paths(["diff", "--cached", "--name-only", "--no-renames"])
 
     def untracked_paths(self) -> list[str]:
         """Untracked files git would stage (ignored and excluded files left out)."""
@@ -128,7 +132,7 @@ class GitCheckpoint:
 
     def pending_paths(self) -> list[str]:
         """Every path this checkpoint would commit: already staged, tracked-changed, untracked."""
-        changed = self._paths(["diff", "--name-only"])
+        changed = self._paths(["diff", "--name-only", "--no-renames"])
         return sorted({*self.staged_paths(), *changed, *self.untracked_paths()})
 
     def stage(self) -> list[str]:

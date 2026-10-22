@@ -43,7 +43,7 @@ router that charges for safety wording (S2), and a rule set that loads twice in 
 5. A subagent that was spawned at `fable` and died on a documented limit or overload error is
    respawned once at `opus` without asking.
 6. KASPER's replies to the human explain every term of art and never trim an explanation.
-7. S1–S4, S6, S9–S12 are fixed, the router ignores negated risk words, and the rules say each
+7. S1–S4, S6, S9–S12 are fixed, the router's exclusion rule never touches risk words, and the rules say each
    fact once.
 
 ## Modules touched
@@ -63,8 +63,8 @@ All paths are relative to the repo root; the same files land in `~/.claude/` thr
 | `.claude/scripts/git_checkpoint.py` | `--only <path>...`: commit exactly those paths and nothing else, **by refusal**, with the commit code untouched — before staging, any path already in the index (`git diff --cached --name-only`) that is not in the list is a refusal naming it (a clean baseline, §3, means this never fires in a wave; a human-staged stray is the human's to unstage); then `git add -- <paths>`; then the staged set must be non-empty and a subset of the list, else refuse; a forbidden path in the list is refused as today. `docs/adr/` leaves `FORBIDDEN_DIRS`; it is refused exactly when `project_dirs.adr_local_only(root)` says so (imported via `sys.path.insert(0, Path(__file__).parent)`, the `permission_recorder.py:34` precedent) — one function, so the checkpoint and the SessionStart hook can never disagree (class 5) | the shared-branch and detached-HEAD refusals, `tasks/`/`claude-*`/`.env` refusals, `--message-file`, the `commit`/`push` code |
 | `.claude/scripts/new_task.py` | `--branch`: refuse unless on the mainline with a clean tree that is not behind its upstream (class 2, below); then `git switch -c feat/<NNN>-<slug>` (10 s timeouts) and fill the doc's `Branch:` line; the template gains `- **Rounds:** 0/3`; an existing branch name makes `git switch -c` fail and the command exit 1 — nothing is overwritten | numbering, slug, title-file |
 | `.claude/commands/new-task.md`, `.claude/commands/checkpoint.md`, `.claude/commands/overnight.md` (new) | `/new-task` passes `--branch` and states the preconditions; `/checkpoint` documents `--only` and the ADR rule; `/overnight on|off` edits the backlog header (§2); all name the installed script path (S1) | — |
-| `.claude/scripts/model_route.py` | `count_phrases` skips a match whose same-sentence left context (up to `NEGATION_WINDOW_CHARS = 40`) holds a `NEGATION_WORDS` entry (S2) | every constant and threshold |
-| `.claude/rules/model-routing.md` | one table row for the negation window, in the same commit as the constant; its command line names the installed path (S1); owned whole by node C | — |
+| `.claude/scripts/model_route.py` | `count_phrases` skips a phrase only as the object of an explicit exclusion in one clause: a `PROHIBITIONS` entry (do not, don't, never, must not, mustn't), then an `EXCLUSION_VERBS` entry (touch, edit, change, modify, delete, write, run), then at most `EXCLUSION_OBJECT_WORDS = 4` words before the phrase, none of them a `SPAN_STOP_WORDS` entry; punctuation (, ; : . ! ?) also ends the clause. Human decision 2026-10-22: risk words are never discounted, so this rule no longer touches the risk list; risk is always scored in full and errors lean expensive (S2) | every constant and threshold |
+| `.claude/rules/model-routing.md` | one table row for the exclusion rule, in the same commit as the constant; its command line names the installed path (S1); owned whole by node C | — |
 | `.claude/scripts/project_dirs.py` | `_link_harness_memory`: a clashing file is moved to `<stem>.from-harness<suffix>`, and when that exists too, `<stem>.from-harness-2<suffix>`, `-3`, … — the first free name, never an overwrite (class 4); `shutil.rmtree` → `harness_mem.rmdir()` so a non-empty dir fails loudly (S3); `main()` prints `Overnight: on (session <id>, until <t>)` when the backlog header says so, so a new session sees it. New public `adr_local_only(root: Path) -> bool | None`: locates the exclude file with the existing `_exclude_file(root)` (`git rev-parse --git-path info/exclude`, which is what makes a linked worktree — `.git` a file — resolve correctly) and answers whether any line of it covers `/docs/adr/` by the same slash-stripped equivalence `_ensure_excluded` uses at `:141-144`; that equivalence moves into one helper, `_entry_present(lines, entry)`, that `_ensure_excluded` calls too — no copy. None when `root` is not a repo (the checkpoint then refuses, as it already does off-repo) | everything else |
 | `.claude/scripts/autoformat.py` | `_RUFF_STEPS[0]` becomes `["check", "--fix", "--select", "I", "--quiet"]` — import ordering only; F401 removal is left to the gate so a just-added import survives (S6); the stale `make setup` docstring line goes | `ruff format`, never-blocks |
 | `.claude/scripts/notify.py` | drop `SND_ASYNC` so the WAV finishes before the hook process exits (S10; Windows still unverified) | sound choice |
@@ -191,24 +191,15 @@ wired as the second `Stop` handler in `settings.json`. It reads the payload from
 (the session scratch dir — the one place a hook writes), and decides in this fixed order; the
 first rule that applies wins:
 
-1. **Terminal:** `overnight.ended` exists, or `session_id` is invalid (`_session_id` from
-   `project_dirs.py`, copied — three lines, since a hook runs via `runpy` without its siblings
-   on the path) → print nothing, exit 0. The header is not consulted: once the ending
-   instruction has been issued, this session never blocks again, whatever the file says.
-2. **Off:** no `tasks/BACKLOG.md`, header not `overnight: on`, or `session:` is not this
-   session's id → print nothing, exit 0. This is the whole behaviour by day, and in every
-   session but the one that typed `/overnight on` — a next-morning session never resumes the
-   night's walk by accident.
-3. **Ending:** no `- [ ]` line left, or `until` passed, **or the counter after this increment
-   reaches `MAX_CONTINUATIONS = 60`** → counter +1, write `overnight.ended`, print
-   `{"decision": "block", "reason": "Overnight ended (<why: backlog empty | until passed | cap reached>). Read tasks/BACKLOG.md, then end the night: append tasks/morning-<date>.md and set `overnight: off`; then stop."}`, exit 0. Issued once per session by construction (rule 1 next time), so the cap's last continuation is the one that writes the report — never a silent exit.
-4. **Continue:** counter +1, print `{"decision": "block", "reason": "Overnight: <n> open backlog item(s). Read tasks/BACKLOG.md, take the first open one, run it as a task; park it if you cannot finish; then stop."}`, exit 0.
+1. **Already ended:** `overnight.ended` exists (the night already ended) → print nothing, exit 0. Checked first.
+2. **Not ours:** `session_id` is invalid, or the backlog is absent, unreadable, header not `overnight: on`, or `session:` is not this session's id (`_session_id` and `project_root` come from `project_dirs.py`) → print nothing, exit 0. This is the whole behaviour by day, and in every session but the one that typed `/overnight on` — a next-morning session never resumes the night's walk by accident. An unreadable header means ownership is unknown: a silent pass.
+3. **Ending:** after ownership, any of: no `- [ ]` line left, `until` passed, the counter already at or over `MAX_CONTINUATIONS = 60`, or the backlog state unreadable → write `overnight.ended`. If the marker was written, or the backlog file is still writable, print `{"decision": "block", "reason": "Overnight ended (<why: backlog empty | until passed | cap reached | state unreadable>). Read tasks/BACKLOG.md, then end the night: append tasks/morning-<date>.md and set `overnight: off`; then stop."}` and exit 0; the end-the-night procedure sets `overnight: off`, which silences the hook. Two silent exits, each with a stderr note: the session transcript (the payload's `transcript_path`, read-only, tail-capped) already holds two ending blocks — counted by the fixed `[overnight-ending]` prefix every ending reason carries, so the ceiling needs no write to hold — or the transcript is unreadable and neither the marker nor the backlog can be written (a read-only project cannot take a morning report). The cap is an ending condition like the others — there is no silent final stop.
+4. **Continue:** counter +1 (incremented, then tested against the cap), print `{"decision": "block", "reason": "Overnight: <n> open backlog item(s). Read tasks/BACKLOG.md, take the first open one, run it as a task; park it if you cannot finish; then stop."}`, exit 0.
 
 Every reason starts with a tool call ("Read tasks/BACKLOG.md"), so the harness's built-in cap
 — eight consecutive blocks with no tool call between them, `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` —
 is reset on every continuation that does any work, and ends the night harmlessly for one that
-does none; the design relies on it rather than fighting it. `stop_hook_active` is logged to
-stderr and not consulted.
+does none; the design relies on it rather than fighting it. `stop_hook_active` is not consulted.
 
 **Ending the night is one procedure, and every path runs it** (classes 1 and
 terminal-report): "end the night" = one KASPER bookkeeping Bash call that **first appends**
@@ -415,7 +406,7 @@ by reference and the language-named developers.
   `git rev-list` may prompt once and the recorder promotes them (no widening). A WIP checkpoint
   pushes a feature branch — the standing exception.
 - **Must not:** run `git merge`; answer a prompt; merge a PR; respawn more than once or from any
-  tier but `fable`; block a Stop after the cap or the ending marker; let a hook write `tasks/`;
+  tier but `fable`; block a Stop once the ending marker exists; let a hook write `tasks/`;
   stage a path a node did not declare; start a task on a dirty or stale mainline.
 - **Needs the human's word (given 2026-10-22):** the Stop handler in `settings.json`. Still
   theirs: `/model opus` for the session; the migration of their own `tasks/BACKLOG.md`.
@@ -435,21 +426,20 @@ with `--deselect` of the node's declared old-behaviour tests during the build on
 - `tests/unit/scripts/test_debate.py` — still green with the process helpers imported from
   `codex_seat` (fakes in `tests/helpers/debate.py` patched on the new owner).
 - `tests/unit/scripts/test_overnight.py` (new) — the four rules in order from fake payloads and
-  fake file reads: cap reached or marker present → nothing, header ignored; off / other session
-  → nothing; no open item or `until` passed → the ending reason once and the marker written;
+  fake file reads: marker present → nothing; off / other session
+  → nothing; owner with an ending condition (backlog empty, `until` passed, counter at/over the cap, state unreadable) → marker written and the ending block returned, or a silent pass with a stderr note when nothing can be written;
   open item → block with the count; invalid `session_id` → nothing and no file.
 - `tests/unit/scripts/test_git_checkpoint.py` — `--only` stages exactly the named paths, refuses
   a forbidden one, an empty set, and a pre-staged path outside the list (naming it); `docs/adr/`
   refused iff `adr_local_only` (faked) says local-only, and refused when it returns None.
-- `tests/unit/scripts/test_model_route.py` — "never touch the ledger" scores risk 0;
-  "migrate the ledger" still scores 2; the window stops at a sentence boundary.
+- `tests/unit/scripts/test_model_route.py` — "never touch the ledger" still scores the risk word in full (risk words are never discounted, human decision 2026-10-22); the exclusion rule does not touch the risk list.
 - `tests/unit/scripts/test_project_dirs.py` — a clashing memory file lands on the first free
   `.from-harness` name with an existing backup untouched, nothing is removed, a non-empty
   harness dir raises; the `Overnight:` line prints iff the header says on; `adr_local_only`
   answers True for `/docs/adr/`, `docs/adr/` and `docs/adr` lines alike (the same
   `_entry_present` that `_ensure_excluded` uses), False for a file without one, None off-repo.
-- `tests/unit/scripts/test_overnight.py` — the cap: the 60th continuation is the ending block
-  with "cap reached", never a silent pass; the 61st is silent.
+- `tests/unit/scripts/test_overnight.py` — the cap is an ending condition: a counter at or over
+  60 returns the ending block with "cap reached" and writes the marker; with the marker present the next Stop is silent.
 - `tests/unit/test_install.py` — `status_report` gains `behind`.
 - `tests/unit/scripts/test_new_task.py` (new) — `--branch` names `feat/<NNN>-<slug>`, writes the
   `Branch:` line, and refuses off-mainline, dirty, and behind, git faked.

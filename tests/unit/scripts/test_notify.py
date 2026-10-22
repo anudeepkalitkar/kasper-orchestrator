@@ -385,17 +385,17 @@ def test_a_missing_sound_file_is_a_silent_no_op(
     assert host.calls == []
 
 
-def test_windows_plays_the_file_by_path_and_does_not_block(
+def test_windows_plays_the_file_by_path_synchronously(
     notify: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``SND_FILENAME | SND_ASYNC``: the argument is a path, and the hook does not wait."""
+    """``SND_FILENAME``: the argument is a path, and the hook waits until playback completes."""
     chord = Path(r"C:\Windows\Media\chord.wav")
     present(monkeypatch, chord)
     played = windows_host(monkeypatch, notify)
 
     notify.play(chord)
 
-    assert played == [(str(chord), SND_FILENAME | SND_ASYNC)]
+    assert played == [(str(chord), SND_FILENAME)]
 
 
 def test_windows_stays_silent_when_the_file_is_missing(
@@ -421,8 +421,8 @@ def test_a_windows_file_that_will_not_play_retries_exactly_once_on_the_bundled_w
     notify.play(chord)
 
     assert played == [
-        (str(chord), SND_FILENAME | SND_ASYNC),
-        (str(notify.SOUND_FILE), SND_FILENAME | SND_ASYNC),
+        (str(chord), SND_FILENAME),
+        (str(notify.SOUND_FILE), SND_FILENAME),
     ]
 
 
@@ -448,7 +448,7 @@ def test_a_failed_bundled_wav_is_not_retried_on_itself_on_windows(
 
     notify.play(notify.SOUND_FILE)
 
-    assert played == [(str(notify.SOUND_FILE), SND_FILENAME | SND_ASYNC)]
+    assert played == [(str(notify.SOUND_FILE), SND_FILENAME)]
 
 
 def test_windows_does_not_retry_when_the_bundled_wav_is_missing(
@@ -461,7 +461,7 @@ def test_windows_does_not_retry_when_the_bundled_wav_is_missing(
 
     notify.play(generic)
 
-    assert played == [(str(generic), SND_FILENAME | SND_ASYNC)]
+    assert played == [(str(generic), SND_FILENAME)]
 
 
 # --------------------------------------------------------------------------------------

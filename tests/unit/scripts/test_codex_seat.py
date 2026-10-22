@@ -18,7 +18,10 @@ import pytest
             "tester",
             ["codex", "exec", "-c", "features.multi_agent=false", "--sandbox", "workspace-write"],
         ),
-        ("reviewer", ["codex", "exec", "review", "-c", "features.multi_agent=false"]),
+        (
+            "reviewer",
+            ["codex", "exec", "-c", "features.multi_agent=false", "--sandbox", "read-only"],
+        ),
         (
             "arch-reviewer",
             ["codex", "exec", "-c", "features.multi_agent=false", "--sandbox", "read-only"],
@@ -82,7 +85,7 @@ def test_dry_run_prints_command_and_output_without_starting_codex(
             "--sandbox",
             "workspace-write",
         ],
-        "reviewer": ["codex", "exec", "review", "-c", "features.multi_agent=false"],
+        "reviewer": ["codex", "exec", "-c", "features.multi_agent=false", "--sandbox", "read-only"],
         "arch-reviewer": [
             "codex",
             "exec",
@@ -124,15 +127,10 @@ def test_non_repository_cwd_is_refused_before_any_work(
     seat: str,
     dry_run: bool,
 ) -> None:
-    """Missing .git stops even a dry run before prompt reads, cleanup, or subprocesses."""
-    checked_paths: list[Path] = []
-
-    def is_dir(path: Path) -> bool:
-        checked_paths.append(path)
-        return False
-
+    """A failed Git root lookup stops even a dry run before prompt reads or Codex."""
+    root = Mock(return_value=None)
+    monkeypatch.setattr(codex_seat, "find_project_root", root)
     file_access = Mock(side_effect=AssertionError("refused cwd must not access files"))
-    monkeypatch.setattr(Path, "is_dir", is_dir)
     for method in ("read_text", "open", "unlink"):
         monkeypatch.setattr(Path, method, file_access)
     argv = [seat, "--brief", "brief.md", "--out", "report.md"]
@@ -141,13 +139,13 @@ def test_non_repository_cwd_is_refused_before_any_work(
 
     assert codex_seat.main(argv) == 2
 
-    assert checked_paths == [seat_project / ".git"]
+    root.assert_called_once_with(seat_project)
     seat_process.assert_not_called()
     file_access.assert_not_called()
     captured = capsys.readouterr()
     assert captured.out == "report.md\n"
     assert str(seat_project) in captured.err
-    assert "not a repository" in captured.err
+    assert "not inside a repository" in captured.err
 
 
 @pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
@@ -178,6 +176,7 @@ def test_role_prompt_is_read_beside_the_script_regardless_of_cwd(
     seat_process.assert_not_called()
 
 
+@pytest.mark.parametrize("seat", ["tester", "reviewer"])
 @pytest.mark.parametrize(
     ("report", "expected"),
     [
@@ -203,16 +202,21 @@ def test_only_an_exact_first_line_gate_is_a_verdict(
     seat_files: dict[Path, str],
     seat_process: Mock,
     capsys: pytest.CaptureFixture[str],
+    seat: str,
     report: str | None,
     expected: int,
 ) -> None:
     """Malformed, missing, or later verdicts must never certify a gate."""
+    if report is not None and seat == "reviewer":
+        report = (
+            report.replace("GATE", "REVIEW").replace("green", "approve").replace("red", "changes")
+        )
     if report is not None:
         seat_files[Path("report.md")] = report
     assert (
         codex_seat.main(
             [
-                "tester",
+                seat,
                 "--brief",
                 "brief.md",
                 "--out",
@@ -222,7 +226,8 @@ def test_only_an_exact_first_line_gate_is_a_verdict(
         == expected
     )
     assert capsys.readouterr().out.splitlines()[-1] == "report.md"
-    assert seat_process.call_count == 2
+    assert seat_process.call_count == 1
+    codex_seat.launch.assert_called_once()
 
 
 @pytest.mark.parametrize("failure", [1, "timeout", "missing"])
@@ -276,7 +281,7 @@ def test_exec_timeout_exits_four_and_uses_requested_deadline(
     seat: str,
 ) -> None:
     """All seats use a bounded run in the repository with stdin disconnected."""
-    seat_process.side_effect = [Mock(returncode=0), subprocess.TimeoutExpired("codex", 7)]
+    codex_seat.launch.return_value.wait.side_effect = subprocess.TimeoutExpired("codex", 7)
     assert (
         codex_seat.main(
             [
@@ -291,29 +296,36 @@ def test_exec_timeout_exits_four_and_uses_requested_deadline(
         )
         == 4
     )
-    assert seat_process.call_args.kwargs == {
+    assert codex_seat.launch.call_args.kwargs == {
         "cwd": seat_project,
         "stdin": subprocess.DEVNULL,
         "stdout": seat_log.return_value,
         "stderr": subprocess.STDOUT,
-        "timeout": 7,
-        "check": False,
     }
     captured = capsys.readouterr()
     assert captured.out == "report.md\n"
     assert "exceeded 7s" in captured.err
+    codex_seat.launch.return_value.wait.assert_called_once_with(timeout=7)
+    codex_seat.kill_and_wait.assert_called_once_with(codex_seat.launch.return_value, None)
     seat_log.return_value.__exit__.assert_called_once()
 
 
 @pytest.mark.parametrize("returncode", [0, 1, 7])
-def test_reviewer_returns_codex_status_without_requiring_a_gate(
+@pytest.mark.parametrize(
+    ("report", "expected"),
+    [("REVIEW: approve", 0), ("REVIEW: changes", 1), ("", 5), ("GATE: green", 5)],
+)
+def test_reviewer_uses_report_verdict_independently_of_process_status(
     codex_seat: ModuleType,
     seat_files: dict[Path, str],
     seat_process: Mock,
     returncode: int,
+    report: str,
+    expected: int,
 ) -> None:
-    """Reviewer findings are data; its process status passes through unchanged."""
-    seat_process.side_effect = [Mock(returncode=0), Mock(returncode=returncode)]
+    """Only an exact reviewer verdict certifies a review."""
+    seat_files[Path("report.md")] = report
+    codex_seat.launch.return_value.wait.return_value = returncode
     assert (
         codex_seat.main(
             [
@@ -324,7 +336,7 @@ def test_reviewer_returns_codex_status_without_requiring_a_gate(
                 "report.md",
             ]
         )
-        == returncode
+        == expected
     )
 
 
@@ -334,7 +346,7 @@ def test_failed_tester_session_without_report_exits_five(
     seat_process: Mock,
 ) -> None:
     """A failed session is no verdict, distinct from a reported red gate."""
-    seat_process.side_effect = [Mock(returncode=0), Mock(returncode=1)]
+    codex_seat.launch.return_value.wait.return_value = 1
     assert (
         codex_seat.main(
             [
@@ -395,7 +407,10 @@ def test_echo_limits_report_lines_and_prints_output_path_last(
 ) -> None:
     """Tester stdout is capped at eleven report lines; reviewers get an overflow pointer."""
     out = Path("reports/my report.md")
-    lines = ["GATE: green", *(f"Finding {index}" for index in range(limit + offset - 1))]
+    lines = [
+        "REVIEW: approve" if seat == "reviewer" else "GATE: green",
+        *(f"Finding {index}" for index in range(limit + offset - 1)),
+    ]
     seat_files[out] = "\n".join(lines) + "\n"
 
     assert codex_seat.main([seat, "--brief", "brief.md", "--out", str(out)]) == 0
@@ -419,7 +434,7 @@ def test_transcript_is_opened_beside_report_without_creating_a_disk_file(
 ) -> None:
     """The complete run routes transcript writes to a fake and never opens or unlinks disk."""
     out = Path("reports/my report.md")
-    seat_files[out] = "GATE: green\n"
+    seat_files[out] = "REVIEW: approve\n" if seat == "reviewer" else "GATE: green\n"
     disk_open = Mock(side_effect=AssertionError("unit test attempted disk open"))
     disk_unlink = Mock(side_effect=AssertionError("unit test attempted disk unlink"))
     disk_stat = Mock(side_effect=AssertionError("unit test attempted disk stat"))
@@ -438,7 +453,8 @@ def test_transcript_is_opened_beside_report_without_creating_a_disk_file(
     disk_stat.assert_not_called()
     real_cwd.assert_not_called()
     seat_log.assert_called_once_with(Path("reports/my report.md.log"), "w", encoding="utf-8")
-    assert seat_process.call_count == 2
+    assert seat_process.call_count == 1
+    codex_seat.launch.assert_called_once()
     assert seat_process.call_args_list[0].args == (["codex", "login", "status"],)
     assert seat_process.call_args_list[0].kwargs == {
         "stdin": subprocess.DEVNULL,
@@ -447,16 +463,14 @@ def test_transcript_is_opened_beside_report_without_creating_a_disk_file(
         "timeout": 30,
         "check": False,
     }
-    assert seat_process.call_args.kwargs == {
+    assert codex_seat.launch.call_args.kwargs == {
         "cwd": seat_project,
         "stdin": subprocess.DEVNULL,
         "stdout": seat_log.return_value,
         "stderr": subprocess.STDOUT,
-        "timeout": 1800,
-        "check": False,
     }
     seat_log.return_value.__exit__.assert_called_once_with(None, None, None)
-    assert capsys.readouterr().out.splitlines() == ["GATE: green", str(out)]
+    assert capsys.readouterr().out.splitlines() == [seat_files[out].strip(), str(out)]
 
 
 def test_unwritable_transcript_stops_before_exec(
@@ -489,7 +503,7 @@ def test_repeatable_stacks_reach_exec_in_requested_order(
     """CLI stack blocks preserve order and repeats between the role and brief."""
     seat_files[codex_seat.STACK_PROMPT_DIR / "a.md"] = "\nRules café\nsecond line\n"
     seat_files[codex_seat.STACK_PROMPT_DIR / "b.md"] = "Rules B\n"
-    seat_files[Path("report.md")] = "GATE: green\n"
+    seat_files[Path("report.md")] = "REVIEW: approve\n" if seat == "reviewer" else "GATE: green\n"
     argv = [seat, "--brief", "brief.md", "--out", "report.md"]
     for name in stacks:
         argv.extend(["--stack", name])
@@ -501,7 +515,7 @@ def test_repeatable_stacks_reach_exec_in_requested_order(
         f"{seat.capitalize()} role\n\n{blocks[stacks[0]]}\n\n"
         f"{blocks[stacks[1]]}\n\n## Brief\nTask brief\n"
     )
-    assert seat_process.call_args.args[0][-1] == expected
+    assert codex_seat.launch.call_args.args[0][-1] == expected
 
 
 @pytest.mark.parametrize(
@@ -573,7 +587,7 @@ def test_arch_reviewer_requires_a_current_nonempty_report(
     """Report presence decides architecture review completion regardless of process status."""
     if report is not None:
         seat_files[Path("report.md")] = report
-    seat_process.side_effect = [Mock(returncode=0), Mock(returncode=returncode)]
+    codex_seat.launch.return_value.wait.return_value = returncode
     assert (
         codex_seat.main(["arch-reviewer", "--brief", "brief.md", "--out", "report.md"]) == expected
     )
@@ -586,7 +600,7 @@ def test_arch_reviewer_requires_a_current_nonempty_report(
 
 
 @pytest.mark.parametrize("seat", ["tester", "reviewer", "arch-reviewer"])
-def test_gate_verdict_is_consulted_only_for_tester(
+def test_each_seat_consults_only_its_own_verdict_contract(
     codex_seat: ModuleType,
     seat_files: dict[Path, str],
     seat_process: Mock,
@@ -595,12 +609,48 @@ def test_gate_verdict_is_consulted_only_for_tester(
 ) -> None:
     """Review seats treat a GATE line as report text, never as their exit verdict."""
     seat_files[Path("report.md")] = "GATE: red\nFindings"
-    verdict = Mock(wraps=codex_seat.read_gate_verdict)
-    monkeypatch.setattr(codex_seat, "read_gate_verdict", verdict)
+    verdict = Mock(wraps=codex_seat.read_verdict)
+    monkeypatch.setattr(codex_seat, "read_verdict", verdict)
     assert codex_seat.main([seat, "--brief", "brief.md", "--out", "report.md"]) == (
-        1 if seat == "tester" else 0
+        1 if seat == "tester" else 5 if seat == "reviewer" else 0
     )
-    if seat == "tester":
-        verdict.assert_called_once_with(Path("report.md"))
+    if seat != "arch-reviewer":
+        verdict.assert_called_once_with(Path("report.md"), seat)
     else:
         verdict.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [1, "timeout", "missing"])
+def test_git_toplevel_failure_is_not_a_repository(
+    codex_seat: ModuleType, monkeypatch: pytest.MonkeyPatch, failure: int | str
+) -> None:
+    """Repository discovery is bounded and fails closed."""
+    run = Mock(return_value=Mock(returncode=1, stdout=""))
+    if failure == "timeout":
+        run.side_effect = subprocess.TimeoutExpired("git", 10)
+    elif failure == "missing":
+        run.side_effect = FileNotFoundError("git")
+    monkeypatch.setattr(codex_seat.subprocess, "run", run)
+    assert codex_seat.find_project_root(Path("/subdir")) is None
+    run.assert_called_once_with(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=Path("/subdir"),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+
+def test_missing_executable_refuses_before_login(
+    codex_seat: ModuleType,
+    seat_files: dict[Path, str],
+    seat_process: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing Windows shim or executable is an unusable seat, not a verdict."""
+    monkeypatch.setattr(codex_seat.shutil, "which", lambda name: None)
+    assert codex_seat.main(["tester", "--brief", "brief.md", "--out", "report.md"]) == 3
+    seat_process.assert_not_called()
+    codex_seat.launch.assert_not_called()

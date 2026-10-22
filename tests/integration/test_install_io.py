@@ -1147,3 +1147,21 @@ def test_an_install_strips_a_stale_sweep_handler_beside_the_users_own(
     (home / install.SETTINGS_NAME).write_text(json.dumps(mixed), encoding="utf-8")
     _run_install(repo_root, home)
     assert [handler["command"] for handler in _session_end_handlers(home)] == ["archive.sh"]
+
+
+def test_status_cli_reports_source_drift_as_behind(
+    tmp_path: Path,
+    home: Path,
+    fixed_now: datetime,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unchanged installed file is behind when its source changes after installation."""
+    source = make_source(tmp_path / "source", {}, {})
+    code, output = _run_install(source, home, now=fixed_now)
+    assert code == 0, output
+    changed = source / ".claude/agents/stub.md"
+    installed_bytes = (home / "agents/stub.md").read_bytes()
+    changed.write_text("new source version", encoding="utf-8")
+    assert install.main(["--status", "--home", str(home)]) == 1
+    assert line_with(capsys.readouterr().out, "behind", "agents/stub.md") is not None
+    assert (home / "agents/stub.md").read_bytes() == installed_bytes

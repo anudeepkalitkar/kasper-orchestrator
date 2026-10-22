@@ -150,3 +150,9 @@ def debate(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """Load the debate script and restore its sibling-import path mutation afterwards."""
     monkeypatch.setattr(sys, "path", sys.path.copy())
     return load_script(repo_root, "debate")
+
+
+@pytest.fixture(autouse=True)
+def clear_project_root_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep hook tests independent of the invoking Claude session's real checkout."""
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)

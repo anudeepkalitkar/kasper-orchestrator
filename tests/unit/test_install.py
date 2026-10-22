@@ -513,3 +513,24 @@ def test_uninstall_plan_deletes_only_untouched_files() -> None:
 def test_uninstall_plan_of_an_empty_manifest_is_empty() -> None:
     """Nothing recorded, nothing to remove."""
     assert install.uninstall_plan({}, {}) == {}
+
+
+def test_status_report_source_changes_are_behind_without_hiding_local_edits() -> None:
+    """Changed, removed, and added source files require an install; local edits stay visible."""
+    recorded = {
+        "changed": "old",
+        "removed": "old",
+        "edited": "old",
+        "missing": "old",
+        "same": "old",
+    }
+    current = {**recorded, "edited": "user", "missing": None}
+    source = {"changed": "new", "added": "new", "edited": "new", "missing": "new", "same": "old"}
+    assert install.status_report(recorded, current, source) == {
+        "changed": "behind",
+        "removed": "behind",
+        "added": "behind",
+        "edited": "modified",
+        "missing": "missing",
+        "same": "ok",
+    }

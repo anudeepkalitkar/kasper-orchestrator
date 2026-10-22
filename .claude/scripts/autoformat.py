@@ -2,9 +2,9 @@
 """Best-effort Python autoformatter, invoked as a PostToolUse hook.
 
 Reads the hook payload (JSON) from stdin, extracts the edited file path, and — if it is a Python
-file and ``ruff`` is available — runs ``ruff check --fix`` (lint autofix) then ``ruff format``.
-Prefers the project's ``.venv/bin/ruff`` (KASPER installs ruff into the venv via ``make setup``),
-falling back to any ``ruff`` on PATH.
+file and ``ruff`` is available — sorts imports (``ruff check --fix --select I``) then runs
+``ruff format``. Unused-import removal is left to the gate so a just-added import survives.
+Prefers the project's ``.venv/bin/ruff``, falling back to any ``ruff`` on PATH.
 
 A silent no-op when the edited file is not Python, ``ruff`` is not found, or anything goes wrong.
 It NEVER blocks the tool call: it always exits 0.
@@ -19,7 +19,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-_RUFF_STEPS: tuple[list[str], ...] = (["check", "--fix", "--quiet"], ["format", "--quiet"])
+_RUFF_STEPS: tuple[list[str], ...] = (
+    ["check", "--fix", "--select", "I", "--quiet"],
+    ["format", "--quiet"],
+)
 
 
 def _find_ruff() -> str | None:
@@ -33,7 +36,7 @@ def _find_ruff() -> str | None:
 
 
 def _format_file(file_path: Path) -> bool:
-    """Run ruff --fix then ruff format on a Python file in place.
+    """Run ruff import sorting then ruff format on a Python file in place.
 
     Returns True only when the file's bytes actually changed, so the caller can surface a visible
     trace on real reformats and stay silent on already-clean edits.

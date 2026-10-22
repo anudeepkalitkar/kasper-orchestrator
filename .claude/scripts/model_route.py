@@ -124,6 +124,24 @@ RISK_WORDS: tuple[str, ...] = (
 RISK_POINTS = 2
 RISK_CAP = 6
 
+#: A phrase is not counted when one of these words sits in its own sentence within
+#: ``NEGATION_WINDOW_CHARS`` characters to its left ("do not delete", "never touch the ledger").
+NEGATION_WORDS: tuple[str, ...] = (
+    "not",
+    "never",
+    "no",
+    "without",
+    "avoid",
+    "cannot",
+    "don't",
+    "doesn't",
+    "won't",
+)
+NEGATION_WINDOW_CHARS = 40
+#: Sentence ends that stop a negation from reaching a later phrase.
+SENTENCE_END = re.compile(r"[.!?\n]")
+_NEGATION = re.compile(r"\b(?:" + "|".join(map(re.escape, NEGATION_WORDS)) + r")(?![\w'])", re.I)
+
 #: (floor, ceiling) per agent; an agent not listed gets ``DEFAULT_BOUNDS``.
 DEFAULT_BOUNDS: tuple[Tier, Tier] = ("haiku", "fable")
 AGENT_BOUNDS: dict[str, tuple[Tier, Tier]] = {
@@ -163,11 +181,28 @@ def count_paths(text: str) -> int:
     return len(paths)
 
 
+def _is_negated(text: str, start: int) -> bool:
+    """Say whether a negation word precedes ``start`` in the same sentence, nearby.
+
+    Args:
+        text: The brief.
+        start: Index where the matched phrase begins.
+
+    Returns:
+        True when a :data:`NEGATION_WORDS` entry lies within :data:`NEGATION_WINDOW_CHARS`
+        characters to the left with no sentence end between it and the phrase.
+    """
+    left = text[max(0, start - NEGATION_WINDOW_CHARS) : start]
+    sentence = SENTENCE_END.split(left)[-1]
+    return _NEGATION.search(sentence) is not None
+
+
 def count_phrases(text: str, phrases: tuple[str, ...]) -> int:
-    """Count how many distinct phrases occur in the text, each at most once.
+    """Count how many distinct phrases occur un-negated in the text, each at most once.
 
     Matching is case-insensitive on word boundaries, so ``async`` does not match
-    ``asyncio`` and a phrase repeated ten times still counts once.
+    ``asyncio`` and a phrase repeated ten times still counts once. A match with a
+    negation word just before it in the same sentence is skipped.
 
     Args:
         text: The brief.
@@ -179,7 +214,12 @@ def count_phrases(text: str, phrases: tuple[str, ...]) -> int:
     return sum(
         1
         for phrase in phrases
-        if re.search(rf"\b{r'\s+'.join(map(re.escape, phrase.split()))}\b", text, re.IGNORECASE)
+        if any(
+            not _is_negated(text, match.start())
+            for match in re.finditer(
+                rf"\b{r'\s+'.join(map(re.escape, phrase.split()))}\b", text, re.IGNORECASE
+            )
+        )
     )
 
 

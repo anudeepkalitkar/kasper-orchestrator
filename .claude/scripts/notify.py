@@ -137,14 +137,14 @@ def play(path: Path) -> None:
     if not path.is_file():
         return
     if sys.platform == "win32":
-        # Async so the hook does not sit through the sound; SND_FILENAME says the
-        # argument is a path rather than a system alias. winsound plays WAV only, which
-        # is why both Windows picks and the fallback are WAV.
-        flags = winsound.SND_FILENAME | winsound.SND_ASYNC
+        # Synchronous so the WAV finishes before the hook process exits (async was
+        # silent); SND_FILENAME says the argument is a path rather than a system alias.
+        # winsound plays WAV only, which is why both Windows picks and the fallback are WAV.
+        flags = winsound.SND_FILENAME
         try:
             winsound.PlaySound(str(path), flags)
         except RuntimeError:
-            # PlaySound reports "could not play that" by raising, async included — the
+            # PlaySound reports "could not play that" by raising — the
             # Windows equivalent of a non-zero player exit, so the same single retry.
             # The fallback has no fallback: a second failure is silence, not an error.
             if path != SOUND_FILE and SOUND_FILE.is_file():

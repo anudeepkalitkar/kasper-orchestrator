@@ -10,7 +10,7 @@ and nothing here needs editing.
 Before every Agent-tool spawn, KASPER runs:
 
 ```bash
-python3 .claude/scripts/model_route.py --agent <name> --brief <file>   # or: … --agent <name> < brief
+python3 "$HOME/.claude/scripts/model_route.py" --agent <name> --brief <file>   # or: … --agent <name> < brief
 ```
 
 Stdout is exactly one tier; pass it as the Agent tool's `model` override. `--explain` adds six
@@ -27,6 +27,7 @@ printed; exit 2 means bad arguments or an unreadable brief.
 | **novelty** — routine work, only when no novelty word appeared | fix, rename, typo, bump, docstring, comment, reword, format | −1 |
 | **ambiguity** | investigate, debug, root cause, unclear, decide, choose, options, why does, intermittent, flaky | +1 each, capped at 3 |
 | **risk** | migration, auth, security, concurrency, race, async, crypto, payment, delete, data loss, production, terraform, infra, permission, ledger | +2 each, capped at 6 |
+| **negation** — a phrase is not counted when a negation word (`not`, `never`, `no`, `without`, `avoid`, `cannot`, `don't`, `doesn't`, `won't`) sits within `NEGATION_WINDOW_CHARS` = 40 characters to its left in the same sentence | "do not delete" scores nothing; every list above |
 | **total → tier** (total is floored at 0) | ≤ 1 · ≤ 5 · ≤ 11 · above 11 | haiku · sonnet · opus · fable |
 | **bounds** — `architect` | floor fable, ceiling fable | always fable |
 | **bounds** — `git-workflow`, `researcher` | floor haiku, ceiling sonnet | tier lowered to sonnet if higher |

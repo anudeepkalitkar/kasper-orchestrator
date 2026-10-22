@@ -98,7 +98,7 @@ HookBlock = dict[str, list[dict[str, Any]]]
 #: ``--uninstall`` does with it (§10). The last two are the same comparison in two
 #: vocabularies, so both are spoken by :func:`_compare_hashes`.
 FileKind = Literal["create", "overwrite", "unchanged"]
-StatusKind = Literal["ok", "modified", "missing"]
+StatusKind = Literal["ok", "modified", "missing", "behind"]
 RemovalKind = Literal["delete", "keep", "missing"]
 _Comparison = Literal["match", "differ", "gone"]
 
@@ -297,23 +297,37 @@ def plan_files(source: Mapping[str, bytes], existing: Mapping[str, bytes]) -> di
 
 
 def status_report(
-    manifest_files: Mapping[str, str], current: Mapping[str, str | None]
+    manifest_files: Mapping[str, str],
+    current: Mapping[str, str | None],
+    source: Mapping[str, str] | None = None,
 ) -> dict[str, StatusKind]:
-    """Judge each recorded file against what is on disk now (§9).
+    """Judge each recorded file against what is on disk now (§9), and against the source (S4).
 
     Args:
         manifest_files: Relative path -> the SHA-256 the manifest recorded.
         current: Relative path -> its SHA-256 now, or None when the file is gone.
+        source: Relative path -> the SHA-256 of the source checkout's owned file now, or None
+            when the source cannot be read (then nothing is judged ``behind``).
 
     Returns:
-        Relative path -> ``ok``, ``modified`` or ``missing``.
+        Relative path -> ``ok``, ``modified``, ``missing`` or ``behind``. ``behind`` marks a
+        home file that still matches the manifest while the source has moved on — changed,
+        removed, or (for a path the manifest never recorded) added since the install.
     """
     words: dict[_Comparison, StatusKind] = {
         "match": "ok",
         "differ": "modified",
         "gone": "missing",
     }
-    return {rel: words[state] for rel, state in _compare_hashes(manifest_files, current).items()}
+    report = {rel: words[state] for rel, state in _compare_hashes(manifest_files, current).items()}
+    if source is None:
+        return report
+    for rel, kind in report.items():
+        if kind == "ok" and source.get(rel) != manifest_files[rel]:
+            report[rel] = "behind"
+    for rel in source.keys() - manifest_files.keys():
+        report[rel] = "behind"
+    return report
 
 
 def uninstall_plan(
@@ -656,6 +670,36 @@ def _current_hashes(home: Path, rels: Iterable[str]) -> dict[str, str | None]:
     }
 
 
+def _source_hashes(home: Path) -> dict[str, str] | None:
+    """Hash the owned files of the source checkout the manifest records (S4).
+
+    A source that is gone or incomplete — a deleted clone, a moved directory — cannot say
+    whether the home is behind; that is reported on stderr and the check is skipped, never
+    guessed.
+
+    Args:
+        home: The Claude home whose manifest names the source.
+
+    Returns:
+        Relative path -> SHA-256 for the source's owned files, or None when there is no
+        readable source.
+
+    Raises:
+        ValueError: When the manifest is not valid JSON.
+        OSError: When the manifest cannot be read.
+    """
+    source = _load_json(home / MANIFEST_NAME).get("source")
+    if not isinstance(source, str):
+        print("install.py: the manifest records no source; behind not checked", file=sys.stderr)
+        return None
+    try:
+        files = owned_files(Path(source) / ".claude")
+    except OSError as exc:
+        print(f"install.py: source unreadable ({exc}); behind not checked", file=sys.stderr)
+        return None
+    return {rel: sha256_hex(content) for rel, content in files.items()}
+
+
 def _prune_empty_dirs(root: Path) -> None:
     """Remove every empty directory under an owned root, the root included (§10).
 
@@ -870,8 +914,9 @@ def status(home: Path, out: TextIO | None = None) -> int:
             resolved now rather than at import so a redirected stream is honoured.
 
     Returns:
-        0 when every recorded file matches and ``settings.json`` still carries the hooks;
-        1 on any drift, and when there is no manifest at all.
+        0 when every recorded file matches, none is ``behind`` the recorded source, and
+        ``settings.json`` still carries the hooks; 1 on any drift (``behind`` included), and
+        when there is no manifest at all.
 
     Raises:
         ValueError: When the manifest or ``settings.json`` is corrupt, malformed, or the
@@ -882,7 +927,7 @@ def status(home: Path, out: TextIO | None = None) -> int:
         print(f"not installed  no {MANIFEST_NAME} under {home}", file=stream)
         return 1
     recorded = _manifest_files(home)
-    report = status_report(recorded, _current_hashes(home, recorded))
+    report = status_report(recorded, _current_hashes(home, recorded), _source_hashes(home))
     for rel in sorted(report):
         print(f"{report[rel]}  {rel}", file=stream)
     # Hooks gone from settings means KASPER is installed but not in force: drift, not clean.

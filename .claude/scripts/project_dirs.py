@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,15 @@ VISIBILITY_TIMEOUT_S: float = 5.0
 #: The scratch root, and the container inside it this hook gives each session.
 SCRATCH_DIR: str = "claude-temp"
 SESSIONS_DIR: str = "sessions"
+
+#: The human's backlog; its header says whether an overnight walk is on (``overnight.py``).
+BACKLOG_PATH: tuple[str, str] = ("tasks", "BACKLOG.md")
+
+#: One ``key: value`` header line of the backlog — ``overnight:``, ``session:``, ``until:``.
+_HEADER_LINE: re.Pattern[str] = re.compile(r"^(overnight|session|until):\s*(\S+)")
+
+#: The infix a clashing harness memory file is renamed with, so nothing is overwritten (S3).
+HARNESS_BACKUP_INFIX: str = ".from-harness"
 
 
 def _exclude_file(root: Path) -> Path | None:
@@ -76,6 +86,56 @@ def _exclude_file(root: Path) -> Path | None:
         return None
     path = Path(rel)
     return path if path.is_absolute() else root / path
+
+
+def _entry_present(lines: list[str], entry: str) -> bool:
+    """Say whether any exclude-file line covers ``entry``.
+
+    Compared stripped of whitespace and slashes, so an existing ``tasks/`` or ``tasks`` counts
+    as covering ``/tasks/``. The one equivalence :func:`_ensure_excluded` and
+    :func:`adr_local_only` share, so the hook and the checkpoint can never disagree.
+
+    Args:
+        lines: The exclude file's lines.
+        entry: The wanted entry, e.g. ``/docs/adr/``.
+
+    Returns:
+        True when a line names the same path.
+    """
+    wanted = entry.strip("/")
+    return any(line.strip().strip("/") == wanted for line in lines)
+
+
+def _read_lines(path: Path) -> list[str]:
+    """The lines of a UTF-8 text file, or none when it does not exist.
+
+    Raises:
+        OSError: When the file exists but cannot be read.
+    """
+    return path.read_bytes().decode("utf-8").splitlines() if path.is_file() else []
+
+
+def adr_local_only(root: Path) -> bool | None:
+    """Say whether ``root``'s decision record is local-only — ``/docs/adr/`` is excluded.
+
+    The exclude file records the choice :func:`_ensure_excluded` made at session start, so
+    reading it needs no network call. ``git_checkpoint.py`` imports this to decide whether
+    ``docs/adr/`` may be staged.
+
+    Args:
+        root: The project root (a linked worktree resolves through ``git rev-parse``).
+
+    Returns:
+        True when an exclude line covers ``/docs/adr/``, False when none does, None when
+        ``root`` is not a git repo.
+
+    Raises:
+        OSError: When the exclude file exists but cannot be read.
+    """
+    path = _exclude_file(root)
+    if path is None:
+        return None
+    return _entry_present(_read_lines(path), ADR_ENTRY)
 
 
 def _is_private_repo(root: Path) -> bool:
@@ -138,12 +198,9 @@ def _ensure_excluded(root: Path) -> bool | None:
     private = _is_private_repo(root)
     text = path.read_bytes().decode("utf-8") if path.is_file() else ""
     lines = text.splitlines()
-    adr = ADR_ENTRY.strip("/")
-    # Compare stripped of slashes so an existing ``tasks/`` counts as covering ``/tasks/``.
-    kept = [line for line in lines if not (private and line.strip().strip("/") == adr)]
-    present = {line.strip().strip("/") for line in kept}
+    kept = [line for line in lines if not (private and _entry_present([line], ADR_ENTRY))]
     wanted = IGNORE_ENTRIES if not private else tuple(e for e in IGNORE_ENTRIES if e != ADR_ENTRY)
-    missing = [e for e in wanted if e.strip("/") not in present]
+    missing = [e for e in wanted if not _entry_present(kept, e)]
     if kept == lines and not missing:
         return private
     newline = "\r\n" if "\r\n" in text else "\n"
@@ -219,17 +276,52 @@ def _link(harness_mem: Path, mem: Path) -> None:
             raise  # a POSIX symlink failure is a real error, not a platform quirk
 
 
+def _free_name(mem: Path, name: str) -> Path:
+    """Where a harness file named ``name`` migrates to inside ``mem`` — never an existing path.
+
+    ``name`` itself when free; else ``<stem>.from-harness<suffix>``, then
+    ``<stem>.from-harness-2<suffix>``, ``-3``, … — the first free name (S3).
+
+    Args:
+        mem: The project's memory directory.
+        name: The harness file's name.
+
+    Returns:
+        A path inside ``mem`` that does not exist yet.
+    """
+    target = mem / name
+    if not target.exists():
+        return target
+    stem, suffix = Path(name).stem, Path(name).suffix
+    target = mem / f"{stem}{HARNESS_BACKUP_INFIX}{suffix}"
+    attempt = 2
+    while target.exists():
+        target = mem / f"{stem}{HARNESS_BACKUP_INFIX}-{attempt}{suffix}"
+        attempt += 1
+    return target
+
+
 def _link_harness_memory(root: Path, mem: Path) -> None:
-    """Link the harness memory dir for ``root`` to ``mem``, migrating any existing files."""
+    """Link the harness memory dir for ``root`` to ``mem``, migrating any existing files.
+
+    A harness file whose name is already taken in ``mem`` is kept under a free
+    ``.from-harness`` name, never dropped (S3); the emptied dir is removed with ``rmdir``, so
+    anything left in it fails loudly instead of being deleted.
+
+    Args:
+        root: The project root.
+        mem: The project's memory directory.
+
+    Raises:
+        OSError: When a file cannot be moved, or the harness dir is not empty afterwards.
+    """
     harness_mem = Path.home() / ".claude" / "projects" / _harness_slug(root) / "memory"
     if _already_wired(harness_mem, mem):
         return
     if harness_mem.is_dir():  # migrate whatever the harness already stored
         for f in harness_mem.iterdir():
-            target = mem / f.name
-            if not target.exists():
-                shutil.move(str(f), target)
-        shutil.rmtree(harness_mem)
+            shutil.move(str(f), _free_name(mem, f.name))
+        harness_mem.rmdir()
     harness_mem.parent.mkdir(parents=True, exist_ok=True)
     _link(harness_mem, mem)
 
@@ -252,6 +344,34 @@ def _session_id(value: object) -> str | None:
     if not isinstance(value, str) or not value or set(value) == {"."}:
         return None
     return value if value == Path(value).name else None
+
+
+def overnight_line(root: Path) -> str | None:
+    """The ``Overnight:`` context line when the backlog header says the walk is on.
+
+    A new session must see that a night is still marked on — perhaps for a session that died
+    before its morning report — so it runs "end the night" first (kasper-v2 §2).
+
+    Args:
+        root: The project root.
+
+    Returns:
+        ``Overnight: on (session <id>[, until <t>])``, or None when the header is not ``on``.
+
+    Raises:
+        OSError: When the backlog exists but cannot be read.
+    """
+    header: dict[str, str] = {}
+    for line in _read_lines(root.joinpath(*BACKLOG_PATH)):
+        match = _HEADER_LINE.match(line)
+        if match:
+            header.setdefault(match.group(1), match.group(2))
+    if header.get("overnight") != "on":
+        return None
+    detail = f"session {header.get('session', 'unknown')}"
+    if "until" in header:
+        detail += f", until {header['until']}"
+    return f"Overnight: on ({detail})"
 
 
 def main() -> None:
@@ -278,6 +398,9 @@ def main() -> None:
     private = _ensure_excluded(root)
     if private is not None:
         print("ADRs: tracked (private repo)" if private else "ADRs: local-only")
+    overnight = overnight_line(root)
+    if overnight is not None:
+        print(overnight)
     _link_harness_memory(root, mem)
 
 

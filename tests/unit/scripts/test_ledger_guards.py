@@ -1,83 +1,161 @@
-"""Decisions on the repository ledger, loaded once as collection-time test data."""
+"""Seed coverage, closed form boundaries, and precedence at the hook entrypoint."""
 
 import json
 from io import StringIO
 from types import ModuleType
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
-from tests.conftest import REPO_ROOT
-from tests.helpers.files import read_json
+from tests.helpers.permission_cases import FEATURE_PUSH_CASES, HOOK_BYPASS_CASES
+from tests.helpers.permission_forms import FORM_EXAMPLES, forbidden_cases
 
-# Like importing the scripts, loading this input happens at collection, never in a unit test.
-LEDGER = read_json(REPO_ROOT / ".claude/permissions-ledger.json")
+# Any: ledger values are heterogeneous JSON, exactly as accepted by the public seam.
+
+
+@pytest.mark.parametrize("key,command", FORM_EXAMPLES.items(), ids=list(FORM_EXAMPLES))
+def test_every_seeded_form_has_positive_example(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    key: str,
+    command: str,
+) -> None:
+    """The independently transcribed form must be present and usable on the seed."""
+    assert key in gate_seed["allow_keys"]
+    actual, reason = permission_gate.verdict(command, gate_seed)
+    assert actual == "allow", reason
+
+
+def test_seed_names_exactly_reviewed_forms(gate_seed: dict[str, Any]) -> None:
+    """Writer, installer and whole-interpreter keys must never enter the seed table."""
+    assert set(gate_seed["allow_keys"]) == set(FORM_EXAMPLES)
+
+
+@pytest.mark.parametrize("key,command,expected", forbidden_cases())
+def test_forbidden_option_classes(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    key: str,
+    command: str,
+    expected: str,
+) -> None:
+    """Config, execution and write options remain excluded on every applicable form."""
+    actual, reason = permission_gate.verdict(command, gate_seed)
+    assert actual == expected, (key, command, reason)
+
+
+@pytest.mark.parametrize("key,command", FORM_EXAMPLES.items(), ids=list(FORM_EXAMPLES))
+def test_no_seeded_form_can_redirect_to_a_file(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    key: str,
+    command: str,
+) -> None:
+    """The output role is forbidden for every form, even with its standing grant."""
+    guarded = key.split()[0] in {
+        "git",
+        "gh",
+        "aws",
+        "docker",
+        "terraform",
+        "python3",
+        "python",
+        "pytest",
+        "mypy",
+        "ruff",
+        "sed",
+        "awk",
+    }
+    assert permission_gate.verdict(command + " > result.txt", gate_seed)[0] == (
+        "ask" if guarded else "none"
+    )
+    assert permission_gate.verdict(command + " > .claude/settings.json", gate_seed)[0] == "ask"
+
+
+@pytest.mark.parametrize("command,guarded", HOOK_BYPASS_CASES)
+def test_hook_bypasses_still_ask(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    command: str,
+    guarded: bool,
+) -> None:
+    """Every pre-existing bypass keeps its exact seed verdict."""
+    assert permission_gate.verdict(command, gate_seed)[0] == ("ask" if guarded else "allow")
+
+
+@pytest.mark.parametrize("command,allowed", FEATURE_PUSH_CASES)
+def test_feature_push_scope(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    command: str,
+    allowed: bool,
+) -> None:
+    """Only feature branch pushes match the reviewed exception."""
+    assert permission_gate.verdict(command, gate_seed)[0] == ("allow" if allowed else "ask")
+
+
+@pytest.mark.parametrize("source", ["allow_keys", "grants", "allow_patterns"])
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("python3 -c code", "ask"),
+        ("git merge x", "ask"),
+        ("terraform plan", "ask"),
+        ("mkdir d", "none"),
+        ("tee out", "none"),
+        ("sort f", "none"),
+        ("mystery x", "none"),
+    ],
+)
+def test_broad_authorization_never_widens_forms(
+    permission_gate: ModuleType,
+    source: str,
+    command: str,
+    expected: str,
+) -> None:
+    """A migrated grant or catch-all pattern selects within the closed table only."""
+    ledger: dict[str, Any] = {
+        source: (
+            {command.split()[0]: "broad"}
+            if source == "allow_keys"
+            else [{"key": command.split()[0]}]
+            if source == "grants"
+            else [{"pattern": ".*"}]
+        )
+    }
+    assert permission_gate.verdict(command, ledger)[0] == expected
+
+
+@pytest.mark.parametrize("source", ["ask_patterns", "denials"])
+def test_regex_guard_wins_over_key(permission_gate: ModuleType, source: str) -> None:
+    """Raw and dequoted part views both preserve the regex guard layer."""
+    ledger = {
+        "allow_keys": {"git status": "read"},
+        source: [{"pattern": "git status", "note": "no"}],
+    }
+    assert permission_gate.verdict('g""it status', ledger) == ("ask", "no")
 
 
 @pytest.mark.parametrize(
-    ("command", "expected"),
+    "command,expected",
     [
-        ("aws s3 rm s3://b/k", "ask"),
-        ("aws route53 change-resource-record-sets --x", "ask"),
-        ("aws secretsmanager rotate-secret --x", "ask"),
-        ("docker push img", "ask"),
-        ("docker login", "ask"),
-        ("docker compose push", "ask"),
-        ('git -c "user.name=A B" merge feat/x', "ask"),
-        ('git -c "user.name=A B" clean -fd', "ask"),
-        ("gh --repo owner/repo variable set X --body=v", "ask"),
-        ("aws route53 change-resource-record-sets --x y", "ask"),
-        ("aws secretsmanager rotate-secret --secret-id s", "ask"),
-        ("dropdb mydb", "ask"),
-        ("cd x && FOO=1 timeout 5 /usr/bin/git merge y", "ask"),
-        ("echo $(git merge y)", "ask"),
-        ("aws s3 ls", "allow"),
-        ("gh pr list", "allow"),
-        ("docker ps", "allow"),
-        ("gh variable set X", "ask"),
-        ("gh secret delete X", "ask"),
-        ("git merge feat/x", "ask"),
-        ("git clean -fd", "ask"),
-        ("dropdb db", "ask"),
-        ("terraform apply", "ask"),
-        ("terraform state rm x", "ask"),
-        ("terraform import a b", "ask"),
-        ('git -C "dir with spaces" merge feat/x', "ask"),
-        ('git -C "dir with spaces" clean -fd', "ask"),
-        ('terraform -chdir="dir with spaces" apply', "ask"),
-        ("gh variable --repo=owner/repo set X --body=v", "ask"),
-        ("gh secret --repo owner/repo delete X", "ask"),
-        ("git log --merges", "allow"),
-        ("git -C x diff", "allow"),
-        ('git commit -m "merge notes"', "allow"),
         ("git status", "allow"),
-        ("ls", "allow"),
-        ("pytest tests/unit", "allow"),
-        ("git merge-base a b", "allow"),
-        ("terraform plan", "allow"),
+        ("git merge x", "ask"),
+        ("unknown_literal", "none"),
     ],
 )
-@pytest.mark.parametrize("allow_source", ["grants", "allow_keys", "allow_patterns"])
-def test_required_ledger_decisions(
+def test_hook_emits_three_verdict_contract(
     permission_gate: ModuleType,
+    permission_unknown_log: Mock,
+    gate_seed: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     command: str,
     expected: str,
-    allow_source: str,
 ) -> None:
-    """Exercise the decision entrypoint so an absent decision cannot pass as ask."""
-    tools = ["git", "gh", "aws", "docker", "terraform", "dropdb", "cd", "echo", "ls", "pytest"]
-    ledger = {**LEDGER, "grants": [], "allow_keys": {}, "allow_patterns": []}
-    if allow_source == "grants":
-        ledger["grants"] = [{"key": tool} for tool in tools]
-    elif allow_source == "allow_keys":
-        ledger["allow_keys"] = dict.fromkeys(tools, "broad test permission")
-    else:
-        ledger["allow_patterns"] = [{"pattern": ".*"}]
-    # Prove a grant covers this command so an unknown-command fallback cannot pass.
-    assert permission_gate.unallowed_parts(command, ledger) == []
-    monkeypatch.setattr(permission_gate, "load_ledger", lambda: ledger)
+    """None emits no decision and logs; ask/allow emit explicit hook JSON."""
+    monkeypatch.setattr(permission_gate, "load_ledger", lambda: gate_seed)
     monkeypatch.setattr(
         permission_gate.sys,
         "stdin",
@@ -91,214 +169,34 @@ def test_required_ledger_decisions(
         ),
     )
     permission_gate.main()
-    result = json.loads(capsys.readouterr().out)
-    assert result["hookSpecificOutput"]["permissionDecision"] == expected
+    output = capsys.readouterr().out
+    if expected == "none":
+        assert output == ""
+        permission_unknown_log.open.assert_called_once_with("a", encoding="utf-8")
+    else:
+        assert json.loads(output)["hookSpecificOutput"]["permissionDecision"] == expected
+        permission_unknown_log.open.assert_not_called()
 
 
-def test_repository_word_rules_are_well_formed_and_cover_guarded_tools() -> None:
-    """Validate collection-loaded policy without filesystem access during the test."""
-    rules = LEDGER["ask_words"]
-    assert isinstance(rules, list)
-    guarded_tools: set[str] = set()
+def test_word_rules_keep_each_required_guard(gate_seed: dict[str, Any]) -> None:
+    """The grammar supplements the required word rules; it does not replace them."""
+    rules = gate_seed["ask_words"]
+    assert {"git", "gh", "aws", "docker", "terraform", "dropdb"} <= {r["tool"] for r in rules}
+    assert any(r["tool"] == "gh" and r["all"] == [["pr"], ["merge"]] for r in rules)
+    assert any(
+        r["tool"] == "aws"
+        and {"cp", "mv", "sync", "run-", "invoke-", "delete-"} <= set(r["all"][0])
+        for r in rules
+    )
+    assert [r["all"] for r in rules if r["tool"] == "terraform"] == [
+        [["apply", "destroy", "import", "taint", "untaint", "force-unlock", "console", "test"]],
+        [["state"], ["rm", "mv", "push", "pull", "replace-provider"]],
+        [["workspace"], ["delete", "new", "select"]],
+    ]
     for rule in rules:
-        assert isinstance(rule, dict)
         assert isinstance(rule["tool"], str) and rule["tool"]
-        guarded_tools.add(rule["tool"])
-        groups = rule["all"]
-        assert isinstance(groups, list)
-        # Empty outer groups intentionally guard every invocation (dropdb).
-        for group in groups:
+        assert isinstance(rule["all"], list)
+        for group in rule["all"]:
             assert isinstance(group, list) and group
             assert all(isinstance(word, str) and word for word in group)
-    assert {"git", "gh", "aws", "docker", "terraform", "dropdb"} <= guarded_tools
-
-
-@pytest.mark.parametrize(
-    "pattern",
-    [
-        r"\bgh\s+pr\s+merge\b",
-        r"\baws\s+[\w-]+\s+(delete|terminate|create|update|put|deploy|run|start|stop|reboot|"
-        r"modify|register|deregister|invoke|cp|sync|mb|rb)[\w-]*\b",
-    ],
-)
-def test_repository_retains_master_payload_guard_patterns(pattern: str) -> None:
-    """Keep the exact master regex guards alongside token-based policy."""
-    assert pattern in {entry["pattern"] for entry in LEDGER["ask_patterns"]}
-
-
-def test_repository_retains_merge_and_aws_word_rules() -> None:
-    """Regex restoration must preserve the complementary word-rule layer."""
-    rules = LEDGER["ask_words"]
-    assert any(rule["tool"] == "gh" and rule["all"] == [["pr"], ["merge"]] for rule in rules)
-    assert any(
-        rule["tool"] == "aws"
-        and len(rule["all"]) == 1
-        and {"cp", "mv", "sync", "run-", "invoke-", "delete-"} <= set(rule["all"][0])
-        for rule in rules
-    )
-
-
-@pytest.mark.parametrize(
-    ("command", "guarded"),
-    [
-        ("aws service delete-item", True),
-        ("aws service --delete-item", False),
-        ("aws service undelete-item", False),
-        ("aws service delete", True),
-        ("gh variable list", False),
-        ("gh issue delete X", False),
-        ("gh variable list && gh issue delete X", False),
-        ("gh secret --repo owner/repo set X", True),
-        ("echo git merge feature", False),
-        ("git -C merge status", True),
-        ("dropdb", True),
-        ("gh --repo owner/repo pr merge 1", True),
-        ("gh pr list", False),
-        ("gh issue merge 1", False),
-        ("aws --region us-east-1 s3 cp a s3://b/k", True),
-        ("aws s3 ls", False),
-    ],
-)
-def test_word_rules_preserve_token_and_command_boundaries(
-    permission_gate: ModuleType, command: str, guarded: bool
-) -> None:
-    """Require whole words, all groups in one command, and explicit prefix matching."""
-    ledger = {"ask_words": LEDGER["ask_words"]}
-    assert (permission_gate.ask_match(command, ledger) is not None) is guarded
-
-
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
-        ("if git clean -fd; then echo done; fi", "ask"),
-        ("while git merge x; do :; done", "ask"),
-        ("until terraform apply; do :; done", "ask"),
-        ("! git merge x", "ask"),
-        ("{ git clean -fd; }", "ask"),
-        ("(git merge x)", "ask"),
-        ("printf x | xargs -I echo git clean -fd", "ask"),
-        ("xargs -n1 git merge", "ask"),
-        ("xargs --max-args=1 git merge", "ask"),
-        ("timeout -s KILL 5 git merge x", "ask"),
-        ("env -u FOO git merge x", "ask"),
-        ("env -S 'git merge x'", "ask"),
-        ("nice -n 5 terraform apply", "ask"),
-        ("xargs -Z git merge", "ask"),
-        ("python3 -c 'import os; os.system(\"terraform apply\")'", "ask"),
-        ("case x in x) gh pr merge 1;; esac", "ask"),
-        ("case x in x) aws s3 cp a s3://b/k;; esac", "ask"),
-        ("python3 -c 'import os; os.system(\"gh pr merge 1\")'", "ask"),
-        ("python3 - <<'PY'\nimport os\nos.system('terraform apply')\nPY", "ask"),
-        ("git log --merges", "allow"),
-        ("git -C x diff", "allow"),
-        ('git commit -m "merge notes"', "allow"),
-        ("terraform plan", "allow"),
-        ("aws s3 ls", "allow"),
-        ("gh pr list", "allow"),
-        ("docker ps", "allow"),
-        ('while read -r line; do echo "$line"; done', "prompt"),
-        ("if git status; then echo ok; fi", "allow"),
-        ("unset 'a[$(git cl\"\"ean -fd)]'", "ask"),
-        ("[[ 'a[$(git cl\"\"ean -fd)]' -eq 0 ]]", "ask"),
-        ("local 'a[$(git merge x)]'", "ask"),
-        ("export 'a[$(git merge x)]'=1", "ask"),
-        ("printf -v 'a[$(git merge x)]' x", "ask"),
-        ("test -v 'a[$(git merge x)]'", "ask"),
-        ("gh --repo x pr merge 1", "ask"),
-        ("gh pr --repo x merge 1", "ask"),
-        ("aws --region us-east-1 s3 cp a s3://b/k", "ask"),
-        ("aws s3 sync . s3://b", "ask"),
-        ("aws ec2 run-instances", "ask"),
-        ("aws lambda invoke --function-name f out", "ask"),
-        ("gh pr view 1", "allow"),
-        ("true || exit 1", "allow"),
-        ("declare 'a[$(x)]'", "ask"),
-        ("let 'a[$(x)]'", "ask"),
-        ("(( a[$(x)] ))", "ask"),
-        ("((a[$(x)]))", "ask"),
-        ("for (( i=$(x); ; ))", "ask"),
-        ("eval '$(x)'", "ask"),
-        ("printf '%s' '$(x)'", "ask"),
-        ("echo '$(x)'", "allow"),
-    ],
-)
-def test_pass_five_decisions_with_broad_grants(
-    permission_gate: ModuleType,
-    permission_unknown_log: Mock,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    command: str,
-    expected: str,
-) -> None:
-    """Guard conditions, wrappers and script payloads despite broad user grants."""
-    tools = [
-        "git",
-        "gh",
-        "aws",
-        "docker",
-        "terraform",
-        "dropdb",
-        "python3",
-        "xargs",
-        "printf",
-        "test",
-    ]
-    ledger = {**LEDGER, "grants": [{"key": tool} for tool in tools]}
-    # Unknown-command logging is faked for commands that defer to the native prompt.
-    if expected == "allow":
-        assert permission_gate.unallowed_parts(command, ledger) == []
-    monkeypatch.setattr(permission_gate, "load_ledger", lambda: ledger)
-    monkeypatch.setattr(
-        permission_gate.sys,
-        "stdin",
-        StringIO(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})),
-    )
-    permission_gate.main()
-    output = capsys.readouterr().out
-    if expected == "prompt":
-        assert output == ""
-        assert permission_gate.ask_match(command, ledger) is None
-        permission_unknown_log.open.assert_called_once_with("a", encoding="utf-8")
-        return
-    assert output, f"Expected explicit {expected!r} decision; gate deferred with no output"
-    result = json.loads(output)
-    assert result["hookSpecificOutput"]["permissionDecision"] == expected
-    assert (permission_gate.ask_match(command, ledger) is not None) is (expected == "ask")
-
-
-@pytest.mark.parametrize("broad_grants", [False, True])
-@pytest.mark.parametrize(
-    "command",
-    [
-        "read 'a[$(git cl\"\"ean -fd)]' <<< x",
-        r'read "a[\$(git merge x)]" <<< x',
-        'while read -r line; do echo "$line"; done',
-    ],
-)
-def test_read_requires_prompt_even_with_broad_grants(
-    permission_gate: ModuleType,
-    permission_unknown_log: Mock,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    command: str,
-    broad_grants: bool,
-) -> None:
-    """Read can evaluate array subscripts, so it must never be implicitly harmless."""
-    ledger = {
-        **LEDGER,
-        "grants": [{"key": "git"}, {"key": "echo"}] if broad_grants else [],
-        "allow_keys": {},
-        "allow_patterns": [],
-    }
-    monkeypatch.setattr(permission_gate, "load_ledger", lambda: ledger)
-    monkeypatch.setattr(
-        permission_gate.sys,
-        "stdin",
-        StringIO(json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})),
-    )
-    permission_gate.main()
-    output = capsys.readouterr().out
-    if output:
-        assert json.loads(output)["hookSpecificOutput"]["permissionDecision"] == "ask"
-    else:
-        permission_unknown_log.open.assert_called_once_with("a", encoding="utf-8")
+    assert r"\bgh\s+pr\s+merge\b" in {r["pattern"] for r in gate_seed["ask_patterns"]}

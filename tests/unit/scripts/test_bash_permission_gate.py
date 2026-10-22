@@ -1,348 +1,172 @@
-"""Pure classification regressions for live, literal and opaque substitutions."""
+"""Spec-driven verdicts and shell word semantics, with no command execution."""
 
 from types import ModuleType
+from typing import Any
 
 import pytest
 
-from tests.helpers.permission_cases import FEATURE_PUSH_CASES, HOOK_BYPASS_CASES
+from tests.helpers.permission_cases import (
+    BROAD_GRANTS,
+    BROAD_GRANTS_B,
+    GUARD_REGRESSION_CASES,
+    SWEEP_CASES,
+)
+
+# Any: heterogeneous JSON policy at the gate's public seam.
+
+
+@pytest.mark.parametrize("extra", [[], BROAD_GRANTS, BROAD_GRANTS_B], ids=["R", "A", "B"])
+@pytest.mark.parametrize("label,command,expected", SWEEP_CASES, ids=[r[0] for r in SWEEP_CASES])
+def test_sweep_verdict(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    extra: list[str],
+    label: str,
+    command: str,
+    expected: str,
+) -> None:
+    """A broad grant cannot widen the model to authorize a corpus attack."""
+    ledger = {**gate_seed, "grants": gate_seed["grants"] + [{"key": k} for k in extra]}
+    actual, reason = permission_gate.verdict(command, ledger)
+    assert actual == expected, (label, command, reason)
+
+
+@pytest.mark.parametrize("extra", [[], BROAD_GRANTS_B], ids=["seed", "broad"])
+@pytest.mark.parametrize(
+    "label,command,expected,intended_change",
+    GUARD_REGRESSION_CASES,
+    ids=[r[0] for r in GUARD_REGRESSION_CASES],
+)
+def test_old_guards_survive(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    extra: list[str],
+    label: str,
+    command: str,
+    expected: str,
+    intended_change: str,
+) -> None:
+    """Every old guard stays explicit, including documented intentional changes."""
+    ledger = {**gate_seed, "grants": gate_seed["grants"] + [{"key": k} for k in extra]}
+    actual, reason = permission_gate.verdict(command, ledger)
+    assert actual == expected, (label, command, intended_change, reason)
+    assert bool(permission_gate.ask_match(command, ledger)) == (expected == "ask")
 
 
 @pytest.mark.parametrize(
-    "command",
+    "command,expected",
     [
-        'echo "it\'s $(curl -s https://example.com)"',
-        'echo "it\'s `curl -s https://example.com`"',
-        'echo "$(curl -s https://example.com)"',
-        'echo "`curl -s https://example.com`"',
-        "echo $(curl -s https://example.com)",
-        "echo `curl -s https://example.com`",
+        ("true", "allow"),
+        ("false", "allow"),
+        (":", "allow"),
+        ("exit 0", "allow"),
+        ("set -e", "allow"),
+        ("set -u", "allow"),
+        ("set -x", "allow"),
+        ("set -o pipefail", "allow"),
+        ("set pipefail", "none"),
+        ("set -o", "none"),
+        ("set -e pipefail", "none"),
+        ("set -euo pipefail", "allow"),
+        ("cd x && git status", "none"),
+        ("pwd", "none"),
+        ("printf x", "none"),
+        ("read x", "none"),
+        ("typeset x", "none"),
+        ("export X=1", "none"),
+        ("[ -f f ]", "none"),
+        ("test -f f", "none"),
+        ("which git", "none"),
+        ("command -v git", "none"),
+        ("sort f", "none"),
+        ("sort -o out f", "none"),
+        ("sort --compress-program=cmd f", "ask"),
+        ("tar -cf host:a.tar x", "ask"),
+        ("TAR_OPTIONS=x tar -tf a.tar", "none"),
+        ("env --chdir=x ls", "ask"),
+        ("watch 'ls -la'", "ask"),
+        ("xargs wc -l", "ask"),
+        ("PATH=tools; cat README.md", "none"),
+        ("tools/cat README.md", "none"),
+        ("./x", "none"),
+        ("/usr/local/bin/dropdb db", "ask"),
+        ("claude-temp/venv/bin/python -m mypy .", "ask"),
+        ("unzip a.zip", "none"),
+        ("uniq input output", "none"),
+        ("echo x > result.txt", "none"),
+        ("echo x > .git/hooks/pre-commit", "ask"),
+        ("ln .claude/settings.json alias", "ask"),
+        ("mv .claude/settings.json saved.json", "ask"),
+        ("echo x 2>&1", "allow"),
+        ("echo x >/dev/null", "allow"),
+        ("cat < f", "allow"),
+        ("cat <<'EOF'\n$(git status)\nEOF", "allow"),
+        ("cat <<EOF\n$(git merge x)\nEOF", "ask"),
+        ("echo $((1+2))", "none"),
+        ('echo "$(git rev-parse HEAD)"', "none"),
+        ("echo $((x))", "ask"),
+        ("echo ${!x}", "ask"),
+        ("typeset -n x=y", "ask"),
+        ("mystery 'g\\i\\t merge x'", "ask"),
+        ("mystery '$x'", "ask"),
+        ("head -20 f", "allow"),
+        ("tail -5 f", "allow"),
+        ("git log -3", "allow"),
+        ("git show -3", "allow"),
+        ("git diff -3", "allow"),
     ],
 )
-def test_unknown_substitution_requires_permission(
-    permission_gate: ModuleType, command: str
+def test_amendments_and_boundaries(
+    permission_gate: ModuleType,
+    gate_seed: dict[str, Any],
+    command: str,
+    expected: str,
 ) -> None:
-    """Allowing echo must never authorize an unknown substitution inside its arguments."""
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.unallowed_parts(command, ledger) == ["curl -s https://example.com"]
+    """Mandatory amendments override old builtin and archive examples."""
+    actual, reason = permission_gate.verdict(command, gate_seed)
+    assert actual == expected, reason
+
+
+@pytest.mark.parametrize("head", "pip pip3 brew apt apt-get gem conda mamba pipenv".split())
+def test_installers_ask(permission_gate: ModuleType, head: str) -> None:
+    """Installer broad grants cannot create a form."""
+    assert permission_gate.verdict(head + " install x", {"allow_keys": {head: "broad"}})[0] == "ask"
+
+
+@pytest.mark.parametrize("head", ["git", "python3", "mypy", "brew", "unknown"])
+@pytest.mark.parametrize("option", ["--help", "--version"])
+def test_accepted_version_deviation(permission_gate: ModuleType, head: str, option: str) -> None:
+    """The brief explicitly accepts deferring version and help queries."""
+    assert permission_gate.verdict(f"{head} {option}", {})[0] == "none"
 
 
 @pytest.mark.parametrize(
-    "command",
+    "command,argv",
     [
-        "echo 'lit $(curl x)'",
-        "echo 'lit `curl x`'",
-        "echo '\"$(curl x)\"'",
-        r'echo "\$(curl x)"',
-        r'echo "\`curl x\`"',
+        (r'echo "a\q"', ("echo", r"a\q")),
+        ("echo 'a\\q'", ("echo", r"a\q")),
+        (r"echo a\q", ("echo", "aq")),
+        ("gi\"\"t sta''tus", ("git", "status")),
+        ("git sta\\\ntus", ("git", "status")),
+        ("echo 'a\\\nb'", ("echo", "a\\\nb")),
+        ("git status\rx", ("git", "status\rx")),
+        (r'echo "\$x"', ("echo", "$x")),
     ],
 )
-def test_literal_substitutions_do_not_create_command_parts(
-    permission_gate: ModuleType, command: str
-) -> None:
-    """Single quotes and escaped substitution delimiters remain literal shell data."""
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.command_parts(command) == [command]
-    assert permission_gate.unallowed_parts(command, ledger) == []
-
-
-def test_quote_state_resets_after_double_quotes(permission_gate: ModuleType) -> None:
-    """A literal single-quoted body following a double-quoted argument stays literal."""
-    command = "echo \"it's $(first)\" '$(literal)' $(last)"
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.unallowed_parts(command, ledger) == ["first", "last"]
-
-
-def test_escaped_double_quote_does_not_hide_live_body(permission_gate: ModuleType) -> None:
-    """An escaped quote and an apostrophe do not end the surrounding double quotes."""
-    command = 'echo "say \\"it\'s $(curl x)\\""'
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.unallowed_parts(command, ledger) == ["curl x"]
-
-
-def test_granted_substitution_is_allowed(permission_gate: ModuleType) -> None:
-    """An extracted body still uses existing ledger grants for its own authorization."""
-    ledger = {"allow_keys": {"echo": "output"}, "grants": [{"key": "brew"}]}
-    assert permission_gate.unallowed_parts('echo "it\'s $(brew --version)"', ledger) == []
-
-
-@pytest.mark.parametrize("body", ["pwd", "git rev-parse HEAD", "date"])
-@pytest.mark.parametrize("form", ["$({body})", '"$({body})"', "`{body}`", '"`{body}`"'])
-def test_simple_substitution_classifies_body(
-    permission_gate: ModuleType, body: str, form: str
-) -> None:
-    """Simple bodies remain separate pending commands in either outer quote context."""
-    command = "echo " + form.format(body=body)
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.command_parts(command)[1:] == [body]
-    assert permission_gate.unallowed_parts(command, ledger) == [body]
-
-
-@pytest.mark.parametrize("command", ["echo '$(curl x)'", "echo '`curl x`'"])
-def test_single_quoted_body_is_not_extracted(permission_gate: ModuleType, command: str) -> None:
-    """A wholly single-quoted opener contributes no inner command."""
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate._extract_substitutions(command) == (command, [])
-    assert permission_gate.unallowed_parts(command, ledger) == []
-
-
-@pytest.mark.parametrize(
-    "body",
-    ["a 'b'", 'a "b"', r"a \b", "a #b", "a `b`", "a $(b)"],
-    ids=["single-quote", "double-quote", "backslash", "hash", "backtick", "nested-dollar"],
-)
-@pytest.mark.parametrize("quoted", [False, True], ids=["unquoted", "double-quoted"])
-def test_opaque_body_emits_one_sentinel_and_preserves_outer_commands(
-    permission_gate: ModuleType, body: str, quoted: bool
-) -> None:
-    """Each opacity trigger replaces the whole body while printf still needs permission."""
-    substitution = f"$({body})"
-    if quoted:
-        substitution = f'"{substitution}"'
-    command = f"echo {substitution}; printf X"
-    outer = 'echo " __SUB__ "' if quoted else "echo  __SUB__ "
-    sentinel = permission_gate._OPAQUE_SUBSTITUTION
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert sentinel == "__opaque_substitution__"
-    assert permission_gate.command_parts(command) == [outer, " printf X", sentinel]
-    assert permission_gate.unallowed_parts(command, ledger) == [" printf X", sentinel]
-
-
-@pytest.mark.parametrize("body", ["a 'b'", 'a "b"', r"a \b", "a #b", "a $(b)"])
-def test_opaque_backtick_body_is_not_classified(permission_gate: ModuleType, body: str) -> None:
-    """Backtick bodies use the same opacity rule before any command classification."""
-    command = f"echo `{body}`"
-    sentinel = permission_gate._OPAQUE_SUBSTITUTION
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.command_parts(command) == ["echo  __SUB__ ", sentinel]
-    assert permission_gate.unallowed_parts(command, ledger) == [sentinel]
-
-
-@pytest.mark.parametrize(
-    "command",
-    ["echo $(", "echo $(echo ok", "echo `", "echo `echo ok", 'echo "$(foo', 'echo "`foo'],
-)
-def test_unterminated_substitution_requires_permission(
-    permission_gate: ModuleType, command: str
-) -> None:
-    """Missing closers produce one pending sentinel even for an allowed command head."""
-    sentinel = permission_gate._OPAQUE_SUBSTITUTION
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.command_parts(command).count(sentinel) == 1
-    assert permission_gate.unallowed_parts(command, ledger) == [sentinel]
-
-
-def test_excessive_unclosed_nesting_fails_closed(permission_gate: ModuleType) -> None:
-    """A thousand open substitutions prompt without exhausting Python's stack."""
-    command = "echo " + "$(" * 1000
-    sentinel = permission_gate._OPAQUE_SUBSTITUTION
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    assert permission_gate.command_parts(command) == ["echo  __SUB__ ", sentinel]
-    assert permission_gate.unallowed_parts(command, ledger) == [sentinel]
-
-
-# Pass 8 reviewer probes, with literal HEAD parts pinned from the probe table.
-_REVIEWER_PROBES: list[tuple[str, list[str], bool]] = [
-    (
-        "echo \"it's $(echo '(')\"; unknown_command",
-        ["echo \"it's $(echo '(')\"", " unknown_command"],
-        True,
-    ),
-    (
-        "echo `echo 'x` ; printf REVIEW_MARKER; echo `echo x'`",
-        ["echo  __SUB__  ", " printf REVIEW_MARKER", " echo  __SUB__ ", "echo 'x", "echo x'"],
-        False,
-    ),
-    (
-        'echo `echo "\\`echo ok; printf REVIEW_MARKER\\`"`',
-        ["echo  __SUB__ echo ok", ' printf REVIEW_MARKER\\`"`', 'echo "\\'],
-        False,
-    ),
-    (
-        "echo $(echo ok # '\n); printf MARK # ')",
-        ["echo  __SUB__ ", " printf MARK # ')", "echo ok # '\n"],
-        False,
-    ),
-    (
-        "echo \"$(echo a\\;#'foo\nbar')\"; printf MARK # ' )",
-        ['echo " __SUB__ "', " printf MARK # ' )", "echo a\\;#'foo\nbar'"],
-        False,
-    ),
-]
-
-
-@pytest.mark.parametrize(("command", "head_parts", "sentinel_only"), _REVIEWER_PROBES)
-def test_reviewer_bypass_prompts_and_retains_head_parts_or_sentinel(
-    permission_gate: ModuleType, command: str, head_parts: list[str], sentinel_only: bool
-) -> None:
-    """Every reviewer bypass prompts; changed HEAD parts must carry an opaque sentinel."""
-    ledger = {"allow_keys": {"echo": "output"}, "grants": []}
-    parts = permission_gate.command_parts(command)
-    pending = permission_gate.unallowed_parts(command, ledger)
-    sentinel = permission_gate._OPAQUE_SUBSTITUTION
-    assert pending != []
-    assert parts == head_parts or sentinel in parts
-    if sentinel_only:
-        assert pending == [sentinel]
-
-
-@pytest.mark.parametrize(
-    ("command", "guarded"),
-    HOOK_BYPASS_CASES,
-)
-def test_hook_bypass_guard_precedes_commit_allowance(
+def test_quote_state_matches_shell_words(
     permission_gate: ModuleType,
     command: str,
-    guarded: bool,
+    argv: tuple[str, ...],
 ) -> None:
-    """Hook bypasses require permission even when ordinary local commits are allowed."""
-    ledger = {
-        "allow_keys": {"git commit": "local", "git status": "local", "echo": "output"},
-        "ask_patterns": [
-            {"pattern": r"^git\b[^&|;\n]*(--no-verify|core\.hooksPath)", "note": "hooks"}
-        ],
-        "grants": [],
-    }
-    assert permission_gate.ask_match(command, ledger) == ("hooks" if guarded else None)
-    if not guarded:
-        assert permission_gate.unallowed_parts(command, ledger) == []
+    """Backslash rules depend on quote context; carriage return is never whitespace."""
+    parts = permission_gate.model_command(command)
+    assert len(parts) == 1
+    assert parts[0].argv == argv
+    assert all(word.literal for word in parts[0].words)
 
 
-@pytest.mark.parametrize(("depth", "allowed"), [(5, True), (6, False), (1000, False)])
-def test_wrapper_depth_limit_fails_closed(
-    permission_gate: ModuleType, depth: int, allowed: bool
-) -> None:
-    """Readable wrappers preserve permission; excessive nesting must still prompt."""
-    command = "env " * depth + "git commit -m x"
-    ledger = {"allow_keys": {"git commit": "local"}, "grants": []}
-    assert (permission_gate.unallowed_parts(command, ledger) == []) is allowed
-
-
-@pytest.mark.parametrize(("command", "allowed"), FEATURE_PUSH_CASES)
-def test_feature_push_allow_pattern(
-    permission_gate: ModuleType, command: str, allowed: bool
-) -> None:
-    """Feature prefixes are allowed while development and master still need permission."""
-    ledger = {
-        "allow_patterns": [
-            {"pattern": r"\bgit\s+push\b.*\b(feat|fix|feature|docs|chore|refactor|test)/"}
-        ],
-    }
-    assert permission_gate.unallowed_parts(command, ledger) == ([] if allowed else [command])
-
-
-@pytest.mark.parametrize(
-    ("wrapper", "options"),
-    [
-        ("xargs", ["-I", "echo"]),
-        ("xargs", ["-n", "1"]),
-        ("xargs", ["-P", "2"]),
-        ("xargs", ["-L", "1"]),
-        ("xargs", ["--max-args=1"]),
-        ("xargs", ["-n1"]),
-        ("timeout", ["-s", "KILL", "-k", "2"]),
-        ("timeout", ["--signal=KILL"]),
-        ("env", ["-u", "FOO", "-C", "directory with spaces"]),
-        ("env", ["--unset=FOO"]),
-        ("nice", ["-n", "5"]),
-        ("nice", ["--adjustment=5"]),
-        ("time", ["-f", "%E", "-o", "timing.txt"]),
-        ("time", ["--output=timing.txt"]),
-        ("xargs", ["-0", "-r", "--"]),
-        ("xargs", []),
-    ],
-)
-def test_wrapper_options_preserve_the_wrapped_command(
-    permission_gate: ModuleType, wrapper: str, options: list[str]
-) -> None:
-    """Consume option values without mistaking them for executable names."""
-    command = ["5", "git", "merge", "x"] if wrapper == "timeout" else ["git", "merge", "x"]
-    assert permission_gate._skip_wrapper_options(wrapper, options + command) == command
-
-
-@pytest.mark.parametrize(
-    ("wrapper", "options"),
-    [
-        ("xargs", ["-Z"]),
-        ("xargs", ["--unknown=value"]),
-        ("xargs", ["-rt"]),
-        ("env", ["-iv"]),
-        ("env", ["-S", "git merge x"]),
-        ("env", ["--split-string=git merge x"]),
-    ],
-)
-def test_unreadable_wrapper_options_fail_closed(
-    permission_gate: ModuleType, wrapper: str, options: list[str]
-) -> None:
-    """Unknown options, combined flags and split-string cannot authorize a command."""
-    assert permission_gate._skip_wrapper_options(wrapper, options + ["git", "status"]) is None
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "if git merge x; then echo done; fi",
-        "while git merge x; do echo done; done",
-        "until git merge x; do echo done; done",
-        "! git merge x",
-        "{ git merge x; }",
-        "(git merge x)",
-        "printf x | xargs -I echo git merge x",
-        "timeout -s KILL 5 git merge x",
-    ],
-)
-def test_condition_and_wrapper_commands_reach_both_permission_checks(
-    permission_gate: ModuleType, command: str
-) -> None:
-    """Regex guards cannot mask a condition or wrapper skipped by token classification."""
-    ledger = {
-        "allow_keys": {"echo": "output", "printf": "output"},
-        "ask_words": [{"tool": "git", "all": [["merge"]], "note": "human merge"}],
-    }
-    assert permission_gate.unallowed_parts(command, ledger)
-    assert permission_gate.ask_match(command, ledger) == "human merge"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "declare 'a[$(x)]'",
-        "let 'a[$(x)]'",
-        "(( a[$(x)] ))",
-        "((a[$(x)]))",
-        "for (( i=$(x); ; ))",
-        "eval '$(x)'",
-        "printf '%s' '$(x)'",
-        "declare 'a[`x`]'",
-        "declare 'a[<(x)]'",
-        "timeout -s KILL 5 eval '$(x)'",
-        "xargs -Z git status",
-    ],
-)
-def test_evaluated_payload_requires_confirmation_note(
-    permission_gate: ModuleType, command: str
-) -> None:
-    """Evaluated text and unreadable wrappers require an explicit ask without ledger rules."""
-    note = permission_gate.evaluated_payload(command)
-    assert isinstance(note, str) and note.strip()
-    assert permission_gate.ask_match(command, {})
-
-
-def test_plain_arithmetic_expansion_has_no_evaluated_payload_ask(
-    permission_gate: ModuleType,
-) -> None:
-    """Arithmetic without a payload must not trigger the new evaluation guard."""
-    command = "echo $(( 1 + 2 ))"
-    ledger = {"allow_keys": {"echo": "output"}}
-    assert permission_gate.evaluated_payload(command) is None
-    assert permission_gate.ask_match(command, ledger) is None
-
-
-@pytest.mark.parametrize("command", ["echo '$(x)'", "git log --merges", "true || exit 1"])
-def test_literal_payload_and_safe_scaffolding_remain_allowed(
-    permission_gate: ModuleType, command: str
-) -> None:
-    """Literal echo text and harmless control flow must not acquire an evaluation guard."""
-    ledger = {"allow_keys": {"echo": "output", "git": "broad", "true": "scaffolding"}}
-    assert permission_gate.evaluated_payload(command) is None
-    assert permission_gate.ask_match(command, ledger) is None
-    assert permission_gate.unallowed_parts(command, ledger) == []
+@pytest.mark.parametrize("command", ["echo '$(x)'", r'echo "\$(x)"', "echo '`x`'"])
+def test_literal_payload_stays_data(permission_gate: ModuleType, command: str) -> None:
+    """Quoted payload-looking text is not recursively evaluated on an inert reader."""
+    assert permission_gate.verdict(command, {"allow_keys": {"echo": "read"}})[0] == "allow"
+    assert len(permission_gate.model_command(command)) == 1

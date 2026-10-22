@@ -6,6 +6,7 @@ disk — so the unit tier can use them without breaking its no-I/O rule.
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -150,3 +151,10 @@ def debate(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     """Load the debate script and restore its sibling-import path mutation afterwards."""
     monkeypatch.setattr(sys, "path", sys.path.copy())
     return load_script(repo_root, "debate")
+
+
+@pytest.fixture(scope="session")
+def gate_seed() -> dict[str, Any]:
+    """Load the real seed once (the brief's explicit unit data-loading exception)."""
+    # Any: the ledger is a heterogeneous JSON policy consumed by the script API.
+    return dict(json.loads((REPO_ROOT / ".claude/permissions-ledger.json").read_text()))

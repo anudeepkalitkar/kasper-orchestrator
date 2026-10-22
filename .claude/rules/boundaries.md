@@ -66,16 +66,30 @@ values in payloads, logs, error reports, or pasted output.
 ## Permission ledger — prompt once per genuinely new thing, never again
 **`.claude/permissions-ledger.json` is the single source of truth for what Bash may auto-run
 and what must be confirmed.** The moving parts:
-- **Gate** (`.claude/scripts/bash_permission_gate.py`, PreToolUse on Bash): decomposes any command —
-  compounds, pipelines, env prefixes, wrappers, loops, substitutions — and auto-allows when
-  every part is covered. Guards force a prompt showing the ledger's note and beat every allow
-  and grant: `ask_words` (a tool plus guarded words, matched on the part's tokens so no option
-  value can hide them — `git` + `merge`, `gh` + `secret` + `set`) and `ask_patterns` (regex).
-  Unknowns fall
-  through to a one-time prompt and are logged to `.claude/permission-unknowns.log`.
+- **Gate** (`.claude/scripts/bash_permission_gate.py`, PreToolUse on Bash): lexes the command
+  itself and **allows only what it fully models** (ADR-0015): every part must be a literal
+  command line matching one *form* in the gate's closed table — tool, subcommand, exact options,
+  positional roles — selected by a ledger key, with no assignment word, env prefix, write
+  redirect, or builtin outside `true`/`false`/`:`/`exit`/`echo`/`set -euxo pipefail` anywhere.
+  Inert forms are read-only (`ls`, `cat`, `grep`, `git`-free readers, `aws` read operations,
+  …) and a tool-name key selects them; **project forms** (`pytest`, `mypy`, `ruff check`, the
+  `.claude/scripts` CLIs, every `git`/`gh` form) run the repository's own code and need their
+  exact key — keying one is a stated act of trust in the repo. Nothing that writes, moves,
+  links or removes a file is ever auto-allowed from Bash: the Write and Edit tools do that.
+  **Ask** when a guarded thing is involved — a non-literal or unreadable command name, an
+  opaque substitution, a guarded tool (`git`, `gh`, `aws`, `docker`, `terraform`, any
+  interpreter, shell, wrapper, spawner or repo-code runner) outside a form, an `ask_words` hit at
+  the command words (`git` + `merge`, `gh` + `pr` + `merge`), an `ask_patterns` regex, or a
+  non-allowed part that mentions an execution-bearing path (`.git/`, `.claude/`, `Makefile`,
+  `*.sh`, `~/`, `/etc/`). Guards beat every allow and grant. Anything else is **none**: the
+  harness's own one-time prompt (or auto mode's classifier) decides, and the command is logged
+  to `.claude/permission-unknowns.log`.
 - **Recorder** (`.claude/scripts/permission_recorder.py`, PostToolUse on Bash): a granted prompt is
-  promoted into `grants` so the same command never prompts twice. Destructive/outward heads
-  (`rm`, `curl`, `ssh`, `bash`, `open`, non-feature `git push`, …) are never auto-promoted.
+  promoted into `grants` so the same command never prompts twice — but only an **inert form**
+  whose missing key was the sole obstacle; project forms, unknown tools, writers, asks and
+  non-literal parts are never recorded, so the recorder cannot widen the ledger beyond the
+  gate's table. Destructive/outward heads (`rm`, `curl`, `ssh`, `bash`, `open`, non-feature
+  `git push`, …) are never auto-promoted.
 - **`/permit`**: curate by hand (add, deny with the user's reasoning, list, review the unknowns log).
 
 Requirements:

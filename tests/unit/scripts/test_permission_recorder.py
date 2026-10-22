@@ -9,35 +9,11 @@ from unittest.mock import Mock
 import pytest
 
 
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
-        ("brew --version", "brew"),
-        ("codex login", "codex"),
-        ("git worktree add /tmp/worktree feature", "git worktree"),
-        ("python3 script.py", "python3"),
-        ("timeout -s KILL 5 git status", "git status"),
-    ],
-)
-def test_legitimate_heads_keep_their_grant_keys(
-    permission_recorder: ModuleType, command: str, expected: str
-) -> None:
-    """Recognized heads retain the required operation prefix without argument leakage."""
-    assert permission_recorder._grant_key(command) == expected
-
-
-def test_opaque_substitution_marker_is_never_promoted(
-    permission_recorder: ModuleType, permission_gate: ModuleType
-) -> None:
-    """A fail-closed parser marker must not become a standing ledger grant."""
-    assert permission_recorder._grant_key(permission_gate._OPAQUE_SUBSTITUTION) is None
-
-
 def test_opaque_substitution_leaves_entire_ledger_untouched(
     permission_recorder: ModuleType, recorder_effects: Mock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Approving an opaque body must not grant the apparent od command after its closer."""
-    command = 'echo "it\'s $(echo ")") ; od -c; echo "'
+    command = 'echo "it\'s $(echo ")") ; wc -l; echo "'
     monkeypatch.setattr(
         permission_recorder.sys,
         "stdin",
@@ -64,7 +40,6 @@ def test_unreadable_wrapper_never_creates_a_grant(
 ) -> None:
     """Human approval cannot teach a standing grant from an unreadable wrapper."""
     command = "xargs -Z git status"
-    assert permission_recorder._grant_key(command) is None
     monkeypatch.setattr(
         permission_recorder.sys,
         "stdin",
@@ -86,7 +61,7 @@ def test_unreadable_wrapper_never_creates_a_grant(
     recorder_effects.replace.assert_not_called()
 
 
-@pytest.mark.parametrize("command", ["echo ready | od -c", 'echo "$(od -c)"'])
+@pytest.mark.parametrize("command", ["echo ready | wc -l", "wc -l"])
 def test_real_unallowed_head_promotes_with_its_part_as_example(
     permission_recorder: ModuleType,
     recorder_effects: Mock,
@@ -114,9 +89,9 @@ def test_real_unallowed_head_promotes_with_its_part_as_example(
         "grants": [
             {"key": "echo"},
             {
-                "key": "od",
+                "key": "wc",
                 "note": "auto-recorded: user approved this command",
-                "example": "od -c",
+                "example": "wc -l",
                 "added": "2026-09-18",
             },
         ]
@@ -141,13 +116,13 @@ def test_only_human_prompt_modes_record_grants(
     mode: str | None,
 ) -> None:
     """Missing and non-human modes leave both ledger and persistence untouched."""
-    payload: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": "od -c"}}
+    payload: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": "wc -l"}}
     if mode is not None:
         payload["permission_mode"] = mode
     monkeypatch.setattr(permission_recorder.sys, "stdin", StringIO(json.dumps(payload)))
     permission_recorder.main()
     if mode in ("default", "acceptEdits", "plan"):
-        assert recorder_effects.ledger["grants"][-1]["key"] == "od"
+        assert recorder_effects.ledger["grants"][-1]["key"] == "wc"
         recorder_effects.write.assert_called_once()
         recorder_effects.replace.assert_called_once()
     else:
@@ -170,8 +145,6 @@ def test_word_guarded_approval_never_promotes(
     }
     recorder_effects.ledger = ledger
     command = "git merge feature"
-    assert permission_recorder._grant_key(command) == "git merge"
-    assert permission_recorder.unallowed_parts(command, ledger) == [command]
     monkeypatch.setattr(
         permission_recorder.sys,
         "stdin",
@@ -192,5 +165,96 @@ def test_word_guarded_approval_never_promotes(
         "grants": [],
         "ask_words": [{"tool": "git", "all": [["merge", "clean"]]}],
     }
+    recorder_effects.write.assert_not_called()
+    recorder_effects.replace.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "od -c",
+        "git status",
+        "python3 script.py",
+        "brew --version",
+        "codex login",
+        "git worktree add /tmp/worktree feature",
+        "timeout -s KILL 5 git status",
+        "mkdir d",
+        "tee out",
+        "sort f",
+        "printf x",
+        "python3 -m pytest",
+        "wc $f",
+        "wc -l > out",
+        "X=1 wc -l",
+        "PATH=tools; wc -l",
+        "./wc -l",
+        "wc -l; git status",
+        "wc -l; unknown",
+        "wc -l; echo $(od -c)",
+        'echo "$(wc -l)"',
+        "wc -l; git merge x",
+    ],
+)
+def test_nonpromotable_part_blocks_entire_command(
+    permission_recorder: ModuleType,
+    recorder_effects: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """Approval never teaches writers, project forms, unknown heads, or partial pipelines."""
+    monkeypatch.setattr(
+        permission_recorder.sys,
+        "stdin",
+        StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "permission_mode": "default",
+                    "tool_input": {"command": command},
+                }
+            )
+        ),
+    )
+    permission_recorder.main()
+    assert recorder_effects.ledger == {"grants": [{"key": "echo"}]}
+    recorder_effects.write.assert_not_called()
+    recorder_effects.replace.assert_not_called()
+
+
+@pytest.mark.parametrize("command,key", [("wc -l", "wc"), ("aws s3 ls", "aws s3 ls")])
+def test_grant_key_comes_from_unkeyed_inert_form(
+    permission_gate: ModuleType,
+    permission_recorder: ModuleType,
+    command: str,
+    key: str,
+) -> None:
+    """Operation-scoped inert keys are derived without leaking input arguments."""
+    forms = permission_gate.unkeyed_inert_forms(command, {})
+    assert forms is not None and len(forms) == 1
+    assert permission_recorder._grant_key(forms[0][0]) == key
+
+
+def test_repeat_approval_does_not_duplicate_grant(
+    permission_recorder: ModuleType,
+    recorder_effects: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An already keyed reader remains a no-op in every persistence collaborator."""
+    monkeypatch.setattr(
+        permission_recorder.sys,
+        "stdin",
+        StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "permission_mode": "default",
+                    "tool_input": {"command": "echo x"},
+                }
+            )
+        ),
+    )
+    permission_recorder.main()
+    assert recorder_effects.ledger == {"grants": [{"key": "echo"}]}
     recorder_effects.write.assert_not_called()
     recorder_effects.replace.assert_not_called()

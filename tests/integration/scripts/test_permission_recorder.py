@@ -53,7 +53,7 @@ def test_recorder_writes_non_ascii_prose_literally(repo_root: Path, tmp_path: Pa
     project = _project_with_ledger(tmp_path)
     payload = {
         "tool_name": "Bash",
-        "tool_input": {"command": "git status"},
+        "tool_input": {"command": "wc -l"},
         "permission_mode": "default",
     }
     completed = subprocess.run(
@@ -70,7 +70,7 @@ def test_recorder_writes_non_ascii_prose_literally(repo_root: Path, tmp_path: Pa
     raw = ledger_path.read_text(encoding="utf-8")
     # The grant proves the file was actually rewritten, so the assertions below are not
     # passing on the untouched original.
-    assert [grant["key"] for grant in json.loads(raw)["grants"]] == ["git status"]
+    assert [grant["key"] for grant in json.loads(raw)["grants"]] == ["wc"]
     assert NOTE in raw
     assert "\\u2014" not in raw
 
@@ -78,12 +78,12 @@ def test_recorder_writes_non_ascii_prose_literally(repo_root: Path, tmp_path: Pa
 @pytest.mark.parametrize(
     ("part", "expected"),
     [
-        ("od -c", "od -c"),
-        ("od \t  -c", "od -c"),
-        ("od -c " + "x" * 153, "od -c " + "x" * 153),
-        ("od -c " + "x" * 154, "od -c " + "x" * 154),
-        ("od -c " + "x" * 155, "od -c " + "x" * 154),
-        ("od \t -c " + "x" * 220, "od -c " + "x" * 154),
+        ("wc -l", "wc -l"),
+        ("wc \t  -l", "wc -l"),
+        ("wc -l " + "x" * 153, "wc -l " + "x" * 153),
+        ("wc -l " + "x" * 154, "wc -l " + "x" * 154),
+        ("wc -l " + "x" * 155, "wc -l " + "x" * 154),
+        ("wc \t -l " + "x" * 220, "wc -l " + "x" * 154),
     ],
     ids=["pipeline", "whitespace", "159-chars", "160-chars", "161-chars", "normalize-then-cap"],
 )
@@ -109,5 +109,5 @@ def test_recorded_example_describes_promoted_pipeline_part(
     )
     assert completed.returncode == 0, completed.stderr
     ledger = json.loads((project / ".claude/permissions-ledger.json").read_text(encoding="utf-8"))
-    examples = [grant["example"] for grant in ledger["grants"] if grant["key"] == "od"]
+    examples = [grant["example"] for grant in ledger["grants"] if grant["key"] == "wc"]
     assert examples == [expected]

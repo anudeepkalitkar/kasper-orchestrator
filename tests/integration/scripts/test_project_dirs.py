@@ -22,6 +22,7 @@ from unittest.mock import Mock
 import pytest
 
 from tests.helpers.files import tree_bytes
+from tests.helpers.git import git
 from tests.helpers.hooks import load_script, run_script
 
 #: What the hook adds, in order (``project_dirs.IGNORE_ENTRIES``).
@@ -294,3 +295,79 @@ def test_a_payload_with_an_unusable_session_id_gets_no_scratch_dir_and_prints_no
     assert result.stdout == ""
     assert list((root / SCRATCH).iterdir()) == []
     assert not (tmp_path / "evil").exists()
+
+
+def test_adr_policy_resolves_linked_worktree_exclude(
+    project_dirs: ModuleType,
+    checkpoint_repo: Path,
+) -> None:
+    """A worktree .git file must resolve the shared exclude file through Git."""
+    linked = checkpoint_repo / "linked"
+    git(checkpoint_repo, "worktree", "add", "--detach", str(linked))
+    assert (linked / ".git").is_file()
+    exclude = checkpoint_repo / ".git/info/exclude"
+    exclude.write_text("docs/adr\n", encoding="utf-8")
+    assert project_dirs.adr_local_only(linked) is True
+    exclude.write_text("# docs/adr\n", encoding="utf-8")
+    assert project_dirs.adr_local_only(linked) is False
+
+
+def test_memory_migration_preserves_all_colliding_files(
+    project_dirs: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Migration chooses the first free backup without replacing earlier memories."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = tmp_path / "project"
+    memory = root / "claude-memory"
+    memory.mkdir(parents=True)
+    harness = tmp_path / ".claude/projects" / project_dirs._harness_slug(root) / "memory"
+    harness.mkdir(parents=True)
+    for name in ["note.md", "note.from-harness.md", "note.from-harness-2.md"]:
+        (memory / name).write_text(name, encoding="utf-8")
+    (harness / "note.md").write_text("incoming", encoding="utf-8")
+    project_dirs._link_harness_memory(root, memory)
+    assert (memory / "note.from-harness-3.md").read_text(encoding="utf-8") == "incoming"
+    for name in ["note.md", "note.from-harness.md", "note.from-harness-2.md"]:
+        assert (memory / name).read_text(encoding="utf-8") == name
+    assert harness.resolve() == memory.resolve()
+
+
+def test_memory_migration_does_not_delete_a_nonempty_harness_directory(
+    project_dirs: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concurrent leftover causes a loud failure instead of recursive deletion."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = tmp_path / "project"
+    memory = root / "claude-memory"
+    memory.mkdir(parents=True)
+    harness = tmp_path / ".claude/projects" / project_dirs._harness_slug(root) / "memory"
+    harness.mkdir(parents=True)
+    (harness / "late.md").write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(Path, "iterdir", lambda path: iter(()))
+    with pytest.raises(OSError):
+        project_dirs._link_harness_memory(root, memory)
+    assert (harness / "late.md").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("name", ["overnight", "project_dirs"])
+@pytest.mark.parametrize("override", [False, True])
+def test_nested_cwd_resolves_stable_project_root(
+    repo_root: Path,
+    checkpoint_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    override: bool,
+) -> None:
+    """Real Git finds the checkout root, while the session override takes precedence."""
+    nested = checkpoint_repo / "package"
+    nested.mkdir()
+    stable = checkpoint_repo / "session-root"
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    if override:
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(stable))
+    module = load_script(repo_root, name)
+    assert module.project_root(str(nested)) == (stable if override else checkpoint_repo)

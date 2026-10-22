@@ -48,9 +48,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
-import signal
 import subprocess
 import sys
 import threading
@@ -63,7 +61,14 @@ from string import ascii_uppercase
 from typing import IO, Literal, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).parent))
-from codex_seat import NO_SUBAGENTS, RUN_LOG_SUFFIX, describe_argv  # noqa: E402
+from codex_seat import (  # noqa: E402
+    NO_SUBAGENTS,
+    RUN_LOG_SUFFIX,
+    describe_argv,
+    kill_and_wait,
+    launch,
+    resolve_executables,
+)
 
 Role = Literal["researcher", "architect"]
 Phase = Literal["propose", "critique", "judge"]
@@ -104,9 +109,6 @@ DEFAULT_JUDGE: tuple[str, str] = ("claude", "fable")
 
 DEFAULT_MAX_CALLS: int = 9
 DEFAULT_TIMEOUT_SECONDS: int = 900
-
-#: Bound on a timed-out call's cleanup: the ``taskkill`` run, and each drain after a kill.
-KILL_TIMEOUT_SECONDS: int = 10
 
 #: ``login status`` / ``auth status`` are local credential reads — they should answer at once.
 READINESS_TIMEOUT_SECONDS: int = 30
@@ -246,124 +248,6 @@ def default_proposers() -> list[tuple[str, str]]:
         ("claude", DEFAULT_CLAUDE_PROPOSER),
         ("claude", DEFAULT_CLAUDE_PROPOSER),
     ]
-
-
-def resolve_executables(vendors: set[str]) -> dict[str, Path]:
-    """Resolve each vendor's CLI with ``shutil.which`` (``.cmd`` shims included on Windows).
-
-    Args:
-        vendors: The vendor names the roster uses.
-
-    Returns:
-        The resolved path per vendor found; a vendor missing from the result is not on PATH,
-        which the caller reports as exit 3.
-    """
-    found: dict[str, Path] = {}
-    for vendor in sorted(vendors):
-        path = shutil.which(vendor)
-        if path is not None:
-            found[vendor] = Path(path)
-    return found
-
-
-def kill_group(process: subprocess.Popen[str], taskkill: Path | None) -> str | None:
-    """Kill a call's whole process group, so the node process behind an npm shim dies too.
-
-    Args:
-        process: A process started in its own group (see :func:`launch`).
-        taskkill: The resolved ``taskkill`` on Windows; unused elsewhere.
-
-    Returns:
-        ``None`` when the kill was issued cleanly, else a one-line cleanup failure.
-    """
-    if sys.platform == "win32":
-        if taskkill is None:
-            process.kill()
-            return "taskkill not resolved; killed the direct child only"
-        try:
-            killed = subprocess.run(
-                [str(taskkill), "/T", "/F", "/PID", str(process.pid)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=KILL_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return f"taskkill timed out after {KILL_TIMEOUT_SECONDS}s"
-        except OSError as exc:
-            return f"taskkill not launchable: {exc}"
-        if killed.returncode != 0:
-            return f"taskkill exit {killed.returncode}"
-        return None
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass  # the group already exited between the timeout and the kill
-    except OSError as exc:
-        return f"killpg failed: {exc}"
-    return None
-
-
-def kill_and_wait(process: subprocess.Popen[str], taskkill: Path | None) -> str | None:
-    """Kill a timed-out call's group, then wait at most :data:`KILL_TIMEOUT_SECONDS` for it.
-
-    No call holds a pipe (see :func:`run_call`), so nothing here can block past the bound: a
-    child that survives the kill is recorded and abandoned, never waited on again.
-
-    Args:
-        process: The timed-out process.
-        taskkill: The resolved ``taskkill`` on Windows.
-
-    Returns:
-        ``None`` when the group was killed and reaped, else a one-line cleanup failure.
-    """
-    problems = [kill_group(process, taskkill)]
-    try:
-        process.wait(timeout=KILL_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        problems.append("child survived cleanup")
-    found = [problem for problem in problems if problem is not None]
-    return "; ".join(found) if found else None
-
-
-def launch(
-    argv: Sequence[str],
-    stdout: int | IO[str],
-    stderr: int | IO[str],
-    stdin: int | IO[str],
-) -> subprocess.Popen[str]:
-    """Start one CLI call in a new process group, never through a shell.
-
-    Args:
-        argv: The command, head already resolved.
-        stdout: Where stdout goes — an open file or ``DEVNULL``; never a pipe.
-        stderr: Where stderr goes — an open file, ``STDOUT``, or ``DEVNULL``.
-        stdin: The open prompt file, or ``DEVNULL`` for a readiness check.
-
-    Returns:
-        The running process.
-
-    Raises:
-        OSError: The command could not be launched.
-    """
-    if sys.platform == "win32":
-        return subprocess.Popen(
-            list(argv),
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            encoding="utf-8",
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-    return subprocess.Popen(
-        list(argv),
-        stdin=stdin,
-        stdout=stdout,
-        stderr=stderr,
-        encoding="utf-8",
-        start_new_session=True,
-    )
 
 
 def vendor_ready(vendor: str, exe: Path, taskkill: Path | None = None) -> bool:

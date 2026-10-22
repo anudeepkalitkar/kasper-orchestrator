@@ -40,15 +40,28 @@ Verifying a suspicion by running a command (tests, lint, `git show`) is fine. Ed
 
 ## Your final message (this is what KASPER reads)
 
-Ranked findings only, most severe first, in this shape — one sentence of *why* each, no padding:
+The **first line** is the verdict, exactly `REVIEW: approve` or `REVIEW: changes` — nothing
+before it, no blank line, no other casing; a script reads it. `REVIEW: changes` when any P1 or P2
+finding exists; `REVIEW: approve` when there are none or only P3 nits.
+
+Then ranked findings, most severe first, **grouped by class** — one `## Class: <name> — <the
+rule or defect in one line>` heading per kind of defect, with every instance of it listed under
+it. KASPER sends the developer back by class, not by line, so find the whole class across the
+diff before you write it up; a further instance of a class an earlier review already reported
+is a P1 on the sweep itself. One sentence of *why* per finding, no padding:
 
 ```
+REVIEW: changes
+## Class: swallowed exceptions — `except: pass` hides the failure; raise or log it
 [P1] path/to/file.py:42 — <what is wrong, in one sentence>
-[P2] path/to/other.py:7 — <…>
+[P1] path/to/other.py:7 — <…>
+## Class: missing return annotation
+[P2] path/to/file.py:88 — <…>
+One line naming what is genuinely good.
 ```
 
 `P1` = must change before merge (bugs, security, a missed requirement, a rule violation).
-`P2` = should change. `P3` = nit. **"No findings." is a valid and welcome final message.**
-Close with one line naming what is genuinely good. Ground every finding in `file:line` from the
-actual diff — never a vibe, never a finding you could not point at. If you are unsure, say so
-rather than asserting.
+`P2` = should change. `P3` = nit (does not block). With no findings the message is
+`REVIEW: approve` then `No findings.` — a valid and welcome result. Close with one line naming
+what is genuinely good. Ground every finding in `file:line` from the actual diff — never a
+vibe, never a finding you could not point at. If you are unsure, say so rather than asserting.

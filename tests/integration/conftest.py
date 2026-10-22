@@ -74,6 +74,7 @@ def debate_project(
         encoding: str | None = None,
         start_new_session: bool = False,
         creationflags: int = 0,
+        cwd: Path | None = None,
     ) -> subprocess.Popen[str]:
         if argv[0] not in ("/controlled/claude", "/controlled/codex"):
             return real_popen(
@@ -84,6 +85,7 @@ def debate_project(
                 encoding=encoding,
                 start_new_session=start_new_session,
                 creationflags=creationflags,
+                cwd=cwd,
             )
         mode_path = tmp_path / "mode.txt"
         mode = mode_path.read_text(encoding="utf-8") if mode_path.exists() else "valid"
@@ -102,6 +104,7 @@ def debate_project(
             encoding=encoding,
             start_new_session=start_new_session,
             creationflags=creationflags,
+            cwd=cwd,
         )
 
     monkeypatch.setattr(debate.subprocess, "Popen", popen)

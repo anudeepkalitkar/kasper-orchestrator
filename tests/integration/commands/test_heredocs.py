@@ -36,6 +36,9 @@ def test_documented_message_file_passes_literal_text(
     message_file.write_text(text, encoding="utf-8")
     scripts = checkpoint_repo / ".claude/scripts"
     scripts.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(checkpoint_repo))
+    monkeypatch.setenv("USERPROFILE", str(checkpoint_repo))
+    shutil.copyfile(repo_root / ".claude/scripts/project_dirs.py", scripts / "project_dirs.py")
     name = "git_checkpoint" if command == "checkpoint" else "new_task"
     shutil.copyfile(repo_root / f".claude/scripts/{name}.py", scripts / f"{name}.py")
     # A regression must record destructive shell execution, never actually perform it.
@@ -51,6 +54,10 @@ def test_documented_message_file_passes_literal_text(
     (checkpoint_repo / "safe.txt").write_text("preserved\n", encoding="utf-8")
     if command == "checkpoint":
         shell_command += " --no-push"
+    else:
+        git(checkpoint_repo, "branch", "-m", "main")
+        git(checkpoint_repo, "add", "safe.txt")
+        git(checkpoint_repo, "commit", "-m", "clean baseline")
     result = subprocess.run(
         ["/bin/sh", "-c", shell_command],
         cwd=checkpoint_repo,

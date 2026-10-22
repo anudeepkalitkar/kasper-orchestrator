@@ -89,3 +89,67 @@ def test_message_argument_or_stdin(
     """Argument precedence and empty input are independent of shell parsing."""
     monkeypatch.setattr(checkpoint.sys, "stdin", StringIO(stdin))
     assert checkpoint.resolve_message(argument) == expected
+
+
+@pytest.mark.parametrize("staged", [["stray.py"], ["allowed.py", "stray.py"]])
+def test_only_refuses_preexisting_strays_without_staging(
+    checkpoint: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    staged: list[str],
+) -> None:
+    """An unrelated staged file stays untouched and is named in the refusal."""
+    operation = checkpoint.GitCheckpoint(push=False, only=["allowed.py"])
+    monkeypatch.setattr(operation, "staged_paths", lambda: staged)
+    run = Mock()
+    monkeypatch.setattr(operation, "_run", run)
+    assert operation.stage_only(["allowed.py"], False) is None
+    assert "stray.py" in capsys.readouterr().err
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("staged", [[], ["stray.py"], ["allowed.py", "stray.py"], ["allowed.py"]])
+def test_only_requires_nonempty_subset_after_staging(
+    checkpoint: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    staged: list[str],
+) -> None:
+    """The post-add check catches empty and widened indexes but accepts a subset."""
+    operation = checkpoint.GitCheckpoint(push=False)
+    monkeypatch.setattr(operation, "staged_paths", Mock(side_effect=[[], staged]))
+    run = Mock()
+    monkeypatch.setattr(operation, "_run", run)
+    assert operation.stage_only(["allowed.py", "unchanged.py"], False) == (
+        staged if staged == ["allowed.py"] else None
+    )
+    run.assert_called_once_with(["add", "--", "allowed.py", "unchanged.py"])
+
+
+@pytest.mark.parametrize("local", [True, False, None])
+def test_adr_policy_uses_shared_answer_and_fails_closed(
+    checkpoint: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    local: bool | None,
+) -> None:
+    """A missing repository answer cannot accidentally publish local ADRs."""
+    operation = checkpoint.GitCheckpoint(push=False)
+    monkeypatch.setattr(operation, "_run", Mock(return_value="/project"))
+    monkeypatch.setattr(checkpoint, "adr_local_only", Mock(return_value=local))
+    assert operation.adr_local() is (local is not False)
+    assert checkpoint.is_forbidden("docs/adr/decision.md", operation.adr_local()) is (
+        local is not False
+    )
+
+
+@pytest.mark.parametrize("path", ["tasks/task.md", ".env", "docs/adr/decision.md"])
+def test_only_refuses_forbidden_before_index_access(
+    checkpoint: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    """Explicit selection does not bypass local-state protection."""
+    operation = checkpoint.GitCheckpoint(push=False)
+    run = Mock(side_effect=AssertionError("forbidden selection reached git"))
+    monkeypatch.setattr(operation, "_run", run)
+    assert operation.stage_only([path], True) is None
+    run.assert_not_called()

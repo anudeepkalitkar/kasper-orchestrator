@@ -1,72 +1,58 @@
 # Rule: Autonomous Workflow — goal → subtasks → verify before done
 
-**Non-trivial work flows through goal-establishment → decomposition into verifiable subtasks →
-autonomous execution → verification — with one consolidated clarifying round as the only gate.**
-Inside a KASPER session, the `/kasper` skill's charter outranks this rule where they conflict.
+**Non-trivial work flows through goal → decomposition into verifiable subtasks → autonomous
+execution → a bounded verify loop — with one consolidated clarifying round as the only gate.**
+Inside a KASPER session, the `/kasper` skill outranks this rule where they conflict.
 
-## 1 · Intake — classify every prompt
-- **Handle directly — no pipeline:** questions/discussion (deliverable = an assessment — report
-  and stop, don't fix until asked); follow-ups on an in-flight task (the running work absorbs
-  them — never start a second pipeline); trivial one-file, obviously-correct changes (just do
-  them); slash commands (their own flow).
-- **Decompose:** anything task-shaped with 3+ steps, multiple files, or distinct concerns.
+## 1 · Intake
+- **Handle directly:** questions and discussion (the deliverable is an assessment — report, don't
+  fix until asked); follow-ups on an in-flight task; trivial one-file, obviously-correct changes;
+  slash commands.
+- **Decompose:** anything with 3+ steps, multiple files, or distinct concerns.
 
-## 2 · Goal — establish it, ask everything once
-Restate the end goal in 1–2 sentences: what "done" observably looks like. If anything material
-is ambiguous (scope, target, library/data-model/API forks, spend-heavy choices), ask **all**
-clarifying questions in **one consolidated round** with a recommendation per fork — never drip,
-never save questions for mid-implementation. If the goal is clear: zero questions. Use plan mode
-for work that needs design (multi-file features, architecture, unclear scope); re-enter it when
-new information invalidates the plan. Subagents cannot ask the user anything — questions happen
-in the main session.
+## 2 · Goal
+Restate the end goal in 1–2 sentences: what "done" observably looks like. If anything material is
+ambiguous (scope, target, library/data-model/API forks, spend-heavy choices), ask **all** questions
+in **one consolidated round** with a recommendation per fork — never drip them. A clear goal needs
+zero questions, and a plan with no fork is stated, not asked. Use plan mode for work that needs
+design. Subagents cannot ask the user anything; questions happen in the main session.
 
-## 3 · Subtasks — the unit of work
-Decompose into ordered subtasks, each independently completable, leaving the code working, and
-mapping to **one git checkpoint** ([[git-workflow]]). Track them in the task doc
-([[documentation]]). Every subtask carries:
-- **goal:** the observable outcome, phrased so a verifier can judge it
-- **done-check:** a runnable, deterministic command — exit code decides, never "looks good".
-  If no runnable check is possible, the subtask is interactive-only — never invent a fuzzy check.
-- **cap:** hard iteration limit, default **5**
-- **owner:** who implements it and runs that done-check as they go.
+## 3 · Subtasks
+Ordered, each independently completable, leaving the code working, mapping to **one git
+checkpoint** ([[git-workflow]]), tracked in the task doc ([[documentation]]). Each carries:
+- **goal** — the observable outcome; **done-check** — a runnable, deterministic command whose exit
+  code decides (no runnable check → the subtask is interactive-only, never a fuzzy check);
+- **cap** — hard iteration limit, default **5**; **owner** — who implements and runs the done-check.
 
-**Verification is once per task, not per subtask:** the developer implements the whole task,
-then one Codex **tester** seat authors the tests and runs the gate, then one Codex **reviewer**
-seat judges the diff — `python3 .claude/scripts/codex_seat.py tester|reviewer|arch-reviewer
---brief <file> --out <file> [--stack <name>...]`, one `--stack` per stack the task touches. Design
-that needs judging *before* it is built goes to the **arch-reviewer** seat instead, after the
-architect writes the spec and before a developer starts. The writer still never grades its own
-work; owner ≠ verifier now also means vendor ≠ vendor ([[delegation]]).
+**Verification is once per task:** the developer implements the whole task, one Codex **tester**
+seat authors the tests and runs the gate, one Codex **reviewer** seat judges the diff, one
+`--stack` per stack touched. A red gate or `REVIEW: changes` re-enters the developer, **a round at
+a time, capped (default 3)**, then tester and reviewer run again; the loop and the action per seat
+exit code live in the `/kasper` skill. A design needing judgment before it is built goes to the
+**arch-reviewer** seat. The writer never grades its own work ([[delegation]]).
 
-## 4 · The gate — the baseline done-check
-Run the project's tests **directly** — no Makefile, no CI. **Python:**
-`ruff check . && mypy . && pytest tests/unit` · **Node:**
-`npx eslint . && npx tsc --noEmit && npm test`. The Codex tester seat runs this gate at task
-end; a subtask owner runs it for their own done-check as they go. Heavier tiers (`tests/integration/`, e2e) run
-before merging changes that touch what they cover ([[test-structure]]). A repo whose
-`pyproject.toml` names the files to check runs **bare `mypy`** instead of `mypy .` — a path
-argument overrides that `files` list, and mypy's crawl skips dot-directories.
+## 4 · The gate (the one place the recipe is written)
+Run tests **directly** — no Makefile, no CI. **Python:** `ruff check . && mypy . && pytest
+tests/unit` · **Node:** `npx eslint . && npx tsc --noEmit && npm test`. A repo whose
+`pyproject.toml` names the files to check runs **bare `mypy`** — a path argument overrides that
+`files` list, and mypy's crawl skips dot-directories. The tester seat runs it at task end; a
+subtask owner runs it as their done-check. Heavier tiers (`tests/integration/`, e2e) run before
+merging what they cover ([[test-structure]]).
 
 ## 5 · Execution guardrails
-1. **One item per iteration** — pick a single subtask/failure, finish it, move on. Fan out
-   independent work in parallel ([[delegation]]); serialize only true dependencies.
-2. **Cap exhaustion escalates — never adapts.** Never weaken an assertion, skip/xfail a test,
-   or tick the box anyway. Cap-exhausted items are recorded **blocked**, not done.
-3. **Checkpoint per subtask, feature branches only** ([[git-workflow]]).
+1. **One item per iteration**; fan out independent work in parallel, serialize true dependencies.
+2. **Cap exhaustion escalates — never adapts.** Never weaken an assertion, skip/xfail a test, or
+   tick the box anyway. Cap-exhausted items are recorded **blocked**.
+3. **Checkpoint per subtask, feature branches only.**
 4. **Faithful state:** tick a box only when its done-check actually ran green.
 
 ## 6 · Verify before done
-Never call work done without proving it: the proof is the tester seat's report — its
-`GATE: green` first line, not a summary of it — plus confirmation that the *behavior* is right;
-"it ran without error" ≠ "it's correct". Root-cause failures — never paper over a
-red result. Report outcomes faithfully: failing tests reported with output, skipped steps named
-plainly, "done and verified" only when true. The bar: what would convince a skeptical staff
-engineer?
+The proof is the tester's `GATE: green` plus the reviewer's `REVIEW: approve` and confirmation the
+*behavior* is right — "it ran without error" ≠ "it's correct". Root-cause failures; report
+outcomes faithfully. The bar: what would convince a skeptical staff engineer?
 
-## 7 · Escalation — the ONLY reasons to stop mid-flow
-1. Ledger-guarded, destructive, or paid ops ([[boundaries]] applies unchanged).
-2. A genuine scope change or plan-invalidating discovery (re-plan, re-confirm).
-3. Cap exhaustion (report faithfully).
+## 7 · Escalation — the only reasons to stop mid-flow
+Ledger-guarded, destructive, or paid ops ([[boundaries]]); a scope change; cap exhaustion.
+Overnight, each parks the item instead (`/kasper` skill).
 
-Related: [[boundaries]], [[git-workflow]], [[delegation]], [[documentation]],
-[[test-structure]].
+Related: [[boundaries]], [[git-workflow]], [[delegation]], [[documentation]], [[test-structure]].

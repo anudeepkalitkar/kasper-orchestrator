@@ -5,27 +5,29 @@ The tester, code-reviewer, and architecture-reviewer seats are not Claude subage
 KASPER invokes this script as a single Bash call, and Codex does the work headless.
 
 - ``tester`` authors tests and runs the gate (workspace-write sandbox; ``GATE:`` verdict).
-- ``reviewer`` judges the diff with ``codex exec review``; its findings are data.
+- ``reviewer`` judges the diff read-only with plain ``codex exec``; its findings are data.
 - ``arch-reviewer`` judges a design document read-only with plain ``codex exec``.
 
 The seat's discipline lives in ``.claude/codex/<seat>.md``; the task-specific brief is a
 file KASPER writes. Each ``--stack <name>`` appends ``.claude/codex/stacks/<name>.md``
 between the two, so a seat carries the conventions of the stack under verification.
 
-Codex's own exit code is not a verdict — a red gate also exits 0 — so the tester
-seat is judged from the first line of its captured report, which the role prompt
-requires to be ``GATE: green`` or ``GATE: red``.
+Codex's own exit code is not a verdict — a red gate also exits 0 — so the tester and
+reviewer seats are judged from the first line of their captured report, which the role
+prompt requires to be ``GATE: green`` / ``GATE: red`` (tester) or ``REVIEW: approve`` /
+``REVIEW: changes`` (reviewer).
 
 Codex's own chatter (banner, echoed prompt, progress) is tens of kilobytes per run
 and KASPER pays for every byte of it, so it goes to ``<out>.log`` — overwritten each
 run, kept as the evidence trail — and stdout carries only the seat's final message
 followed by the report path.
 
-The project under verification is the **working directory the seat is run from** —
-never the script's own location, which for an installed copy is ``~/.claude``. KASPER
-runs the seat from the project root; ``--brief`` and ``--out`` are read and written
-relative to it, and a working directory with no ``.git`` is refused rather than
-verified by accident.
+The project under verification is the **repository top level of the working directory
+the seat is run from** (so a subdirectory or a linked worktree works) — never the
+script's own location, which for an installed copy is ``~/.claude``. ``--brief`` and
+``--out`` are resolved against the directory the script was started in, and a directory
+outside any repository is refused rather than verified by accident. A timed-out run is
+killed as a whole process group, so no Codex child outlives it.
 
 Usage:
     python3 codex_seat.py tester   --brief <brief.md> --out <report.md>
@@ -33,27 +35,30 @@ Usage:
     python3 codex_seat.py arch-reviewer --stack python --brief <brief.md> --out <review.md>
 
 Exit codes:
-    0  tester: the gate is green · reviewer: Codex completed its turn ·
+    0  tester: the gate is green · reviewer: ``REVIEW: approve`` ·
        arch-reviewer: Codex wrote a non-empty report
-    1  tester: the gate is red
+    1  tester: the gate is red · reviewer: ``REVIEW: changes``
     2  bad arguments, an unreadable brief/role/stack prompt, an unusable --out path, or
        a working directory that is not a repository
     3  Codex is unusable — not signed in, or not on PATH
     4  the run exceeded --timeout and was killed
-    5  tester: Codex finished but wrote no parseable ``GATE:`` line ·
-       arch-reviewer: Codex finished but its report is empty or absent
+    5  tester/reviewer: Codex finished but wrote no parseable verdict line (an empty
+       report included) · arch-reviewer: Codex finished but its report is empty or absent
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
 Seat = Literal["tester", "reviewer", "arch-reviewer"]
 
@@ -82,8 +87,17 @@ LOGIN_TIMEOUT_SECONDS: int = 30
 #: How much of the prompt ``--dry-run`` echoes before abbreviating it.
 DRY_RUN_PROMPT_CHARS: int = 80
 
-#: The exact opener the role prompt demands of a tester report's first line.
-GATE_PREFIX: str = "GATE: "
+#: The exact first lines a role prompt allows: (pass, fail) per seat that has a verdict.
+VERDICT_LINES: dict[Seat, tuple[str, str]] = {
+    "tester": ("GATE: green", "GATE: red"),
+    "reviewer": ("REVIEW: approve", "REVIEW: changes"),
+}
+
+#: Locating the repository top level reads local metadata — it should answer instantly.
+TOPLEVEL_TIMEOUT_SECONDS: int = 10
+
+#: Bound on a timed-out call's cleanup: the ``taskkill`` run, and each drain after a kill.
+KILL_TIMEOUT_SECONDS: int = 10
 
 #: Codex's transcript lands beside the report under this suffix.
 RUN_LOG_SUFFIX: str = ".log"
@@ -94,7 +108,7 @@ TESTER_ECHO_LINES: int = 11
 #: Ranked findings are longer; echo enough to act on and leave the rest in the file.
 REVIEWER_ECHO_LINES: int = 60
 
-EXIT_GATE_RED: int = 1
+EXIT_FAIL_VERDICT: int = 1
 EXIT_BAD_ARGUMENTS: int = 2
 EXIT_CODEX_UNUSABLE: int = 3
 EXIT_TIMEOUT: int = 4
@@ -143,13 +157,14 @@ def build_prompt(seat: Seat, brief: Path, stacks: Sequence[str] = ()) -> str:
     return "\n\n".join(parts) + "\n"
 
 
-def codex_argv(seat: Seat, out: Path, prompt: str) -> list[str]:
+def codex_argv(seat: Seat, out: Path, prompt: str, codex: str = "codex") -> list[str]:
     """Return the Codex command line for a seat.
 
     The tester needs ``--sandbox workspace-write`` (it writes tests and the gate
-    writes caches); the reviewer runs ``codex exec review`` in its free-text form,
-    which is the only shape that accepts our rules as a prompt; the arch-reviewer
-    judges a design document, not a diff, so it runs plain ``codex exec`` read-only.
+    writes caches). The reviewer and the arch-reviewer run plain ``codex exec`` read-only:
+    ``codex exec review`` imposes its own JSON output contract over the prompt's, so the
+    reviewer's ``REVIEW:`` first line would never appear and every review would read as no
+    verdict. Plain ``exec`` keeps each role prompt's contract — the one the parser reads.
     Every form pins ``features.multi_agent=false`` so a seat can never spawn Codex
     sub-threads — chain law is one hop.
 
@@ -157,13 +172,15 @@ def codex_argv(seat: Seat, out: Path, prompt: str) -> list[str]:
         seat: The seat being run.
         out: File Codex writes its final message to.
         prompt: The composed prompt from :func:`build_prompt`.
+        codex: The resolved Codex executable (``shutil.which``, so a Windows ``.cmd`` shim
+            is found); defaults to the bare name.
 
     Returns:
         The argv list, prompt last.
     """
     if seat == "tester":
         return [
-            "codex",
+            codex,
             "exec",
             *NO_SUBAGENTS,
             "--sandbox",
@@ -172,16 +189,17 @@ def codex_argv(seat: Seat, out: Path, prompt: str) -> list[str]:
             str(out),
             prompt,
         ]
-    if seat == "arch-reviewer":
-        return ["codex", "exec", *NO_SUBAGENTS, "--sandbox", "read-only", "-o", str(out), prompt]
-    return ["codex", "exec", "review", *NO_SUBAGENTS, "-o", str(out), prompt]
+    return [codex, "exec", *NO_SUBAGENTS, "--sandbox", "read-only", "-o", str(out), prompt]
 
 
-def is_logged_in() -> bool:
+def is_logged_in(codex: str = "codex") -> bool:
     """Report whether the Codex CLI has a usable ChatGPT sign-in.
 
     Without this pre-flight an unauthenticated run burns ~60s on 401 retries
     before failing.
+
+    Args:
+        codex: The resolved Codex executable.
 
     Returns:
         True when ``codex login status`` exits 0.
@@ -192,7 +210,7 @@ def is_logged_in() -> bool:
     try:
         return (
             subprocess.run(
-                ["codex", "login", "status"],
+                [codex, "login", "status"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -205,29 +223,32 @@ def is_logged_in() -> bool:
         return False
 
 
-def read_gate_verdict(out: Path) -> Literal["green", "red"] | None:
-    """Read the tester's verdict from the first line of its report.
+def read_verdict(out: Path, seat: Seat) -> Literal["pass", "fail"] | None:
+    """Read a seat's verdict from the first line of its report.
 
     The match is exact — no leading blank line, no surrounding whitespace, no other
     casing. A seat that cannot follow the one formatting rule it was given has not
-    shown it ran the gate, so anything else is "no verdict" rather than a guess.
+    shown it did the work, so anything else is "no verdict" rather than a guess.
 
     Args:
         out: The file Codex wrote its final message to.
+        seat: ``tester`` or ``reviewer``; the seat picks the accepted lines from
+            :data:`VERDICT_LINES`.
 
     Returns:
-        ``"green"`` or ``"red"``, or None when the file is missing or its first
-        line is not exactly the ``GATE:`` line the role prompt demands.
+        ``"pass"`` (green / approve), ``"fail"`` (red / changes), or None when the file
+        is missing, empty, or its first line is not exactly one of the seat's lines.
     """
+    passing, failing = VERDICT_LINES[seat]
     try:
         lines = out.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     first_line = lines[0] if lines else ""
-    if first_line == f"{GATE_PREFIX}green":
-        return "green"
-    if first_line == f"{GATE_PREFIX}red":
-        return "red"
+    if first_line == passing:
+        return "pass"
+    if first_line == failing:
+        return "fail"
     return None
 
 
@@ -260,6 +281,157 @@ def describe_argv(argv: list[str]) -> str:
     return shlex.join([*head, shown])
 
 
+def resolve_executables(vendors: set[str]) -> dict[str, Path]:
+    """Resolve each vendor's CLI with ``shutil.which`` (``.cmd`` shims included on Windows).
+
+    Args:
+        vendors: The vendor names the roster uses.
+
+    Returns:
+        The resolved path per vendor found; a vendor missing from the result is not on PATH,
+        which the caller reports as exit 3.
+    """
+    found: dict[str, Path] = {}
+    for vendor in sorted(vendors):
+        path = shutil.which(vendor)
+        if path is not None:
+            found[vendor] = Path(path)
+    return found
+
+
+def kill_group(process: subprocess.Popen[str], taskkill: Path | None) -> str | None:
+    """Kill a call's whole process group, so the node process behind an npm shim dies too.
+
+    Args:
+        process: A process started in its own group (see :func:`launch`).
+        taskkill: The resolved ``taskkill`` on Windows; unused elsewhere.
+
+    Returns:
+        ``None`` when the kill was issued cleanly, else a one-line cleanup failure.
+    """
+    if sys.platform == "win32":
+        if taskkill is None:
+            process.kill()
+            return "taskkill not resolved; killed the direct child only"
+        try:
+            killed = subprocess.run(
+                [str(taskkill), "/T", "/F", "/PID", str(process.pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=KILL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return f"taskkill timed out after {KILL_TIMEOUT_SECONDS}s"
+        except OSError as exc:
+            return f"taskkill not launchable: {exc}"
+        if killed.returncode != 0:
+            return f"taskkill exit {killed.returncode}"
+        return None
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # the group already exited between the timeout and the kill
+    except OSError as exc:
+        return f"killpg failed: {exc}"
+    return None
+
+
+def kill_and_wait(process: subprocess.Popen[str], taskkill: Path | None) -> str | None:
+    """Kill a timed-out call's group, then wait at most :data:`KILL_TIMEOUT_SECONDS` for it.
+
+    No call holds a pipe (see :func:`run_call`), so nothing here can block past the bound: a
+    child that survives the kill is recorded and abandoned, never waited on again.
+
+    Args:
+        process: The timed-out process.
+        taskkill: The resolved ``taskkill`` on Windows.
+
+    Returns:
+        ``None`` when the group was killed and reaped, else a one-line cleanup failure.
+    """
+    problems = [kill_group(process, taskkill)]
+    try:
+        process.wait(timeout=KILL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        problems.append("child survived cleanup")
+    found = [problem for problem in problems if problem is not None]
+    return "; ".join(found) if found else None
+
+
+def launch(
+    argv: Sequence[str],
+    stdout: int | IO[str],
+    stderr: int | IO[str],
+    stdin: int | IO[str],
+    cwd: Path | None = None,
+) -> subprocess.Popen[str]:
+    """Start one CLI call in a new process group, never through a shell.
+
+    Args:
+        argv: The command, head already resolved.
+        stdout: Where stdout goes — an open file or ``DEVNULL``; never a pipe.
+        stderr: Where stderr goes — an open file, ``STDOUT``, or ``DEVNULL``.
+        stdin: The open prompt file, or ``DEVNULL`` for a readiness check.
+        cwd: The working directory for the call; the caller's own when None.
+
+    Returns:
+        The running process.
+
+    Raises:
+        OSError: The command could not be launched.
+    """
+    if sys.platform == "win32":
+        return subprocess.Popen(
+            list(argv),
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            cwd=cwd,
+            encoding="utf-8",
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    return subprocess.Popen(
+        list(argv),
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        cwd=cwd,
+        encoding="utf-8",
+        start_new_session=True,
+    )
+
+
+def find_project_root(start: Path) -> Path | None:
+    """Return the repository top level containing ``start``.
+
+    Asking the VCS rather than looking for a ``.git`` directory is what makes a linked
+    worktree (where ``.git`` is a file) and a subdirectory (where it is absent) work.
+
+    Args:
+        start: The directory the seat was started in.
+
+    Returns:
+        The top-level directory, or None when ``start`` is outside a repository or the
+        VCS cannot be run.
+    """
+    try:
+        found = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TOPLEVEL_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    top = found.stdout.strip()
+    return Path(top) if found.returncode == 0 and top else None
+
+
 def has_report(out: Path) -> bool:
     """Report whether Codex left a non-empty final message at ``out``.
 
@@ -285,8 +457,9 @@ def run_seat(
 ) -> int:
     """Run one seat end to end and return this script's exit code.
 
-    Codex runs in the current working directory — the project KASPER invoked the seat
-    for — so the same script serves the repository copy and the installed home copy.
+    Codex runs from the repository top level of the current directory — the project KASPER
+    invoked the seat for — so the same script serves the repository copy and the
+    installed home copy.
 
     Args:
         seat: The seat to run.
@@ -299,15 +472,22 @@ def run_seat(
     Returns:
         A process exit code as documented in the module docstring.
     """
-    project = Path.cwd()
-    if not (project / ".git").is_dir():
+    project = find_project_root(Path.cwd())
+    if project is None:
         print(
-            f"{project} is not a repository — run the seat from the project root.", file=sys.stderr
+            f"{Path.cwd()} is not inside a repository — run the seat from the project.",
+            file=sys.stderr,
         )
         return EXIT_BAD_ARGUMENTS
+    # Resolved now, against the directory the caller started in: Codex runs from the
+    # repository top level, which may be a different directory.
+    brief, out = brief.resolve(), out.resolve()
+    # Resolved once, so a Windows ``.cmd`` shim is found and both the sign-in check and
+    # the run use the same executable; a dry run does not need Codex installed.
+    codex = shutil.which("codex")
 
     try:
-        argv = codex_argv(seat, out, build_prompt(seat, brief, stacks))
+        argv = codex_argv(seat, out, build_prompt(seat, brief, stacks), codex or "codex")
     except OSError as exc:
         print(f"cannot read the seat's prompt: {exc}", file=sys.stderr)
         return EXIT_BAD_ARGUMENTS
@@ -316,9 +496,21 @@ def run_seat(
         print(describe_argv(argv))
         return 0
 
+    if codex is None:
+        print("codex is not on PATH — install @openai/codex.", file=sys.stderr)
+        return EXIT_CODEX_UNUSABLE
+    taskkill_path = shutil.which("taskkill") if sys.platform == "win32" else None
+    taskkill = Path(taskkill_path) if taskkill_path else None
+    if sys.platform == "win32" and taskkill is None:
+        # Without taskkill a timeout could kill only the shim and leave Codex running.
+        print(
+            "taskkill not resolved — cannot guarantee a timed-out run is killed.", file=sys.stderr
+        )
+        return EXIT_CODEX_UNUSABLE
+
     log = Path(f"{out}{RUN_LOG_SUFFIX}")
     try:
-        if not is_logged_in():
+        if not is_logged_in(codex):
             print("codex is not signed in — run `codex login`, then retry.", file=sys.stderr)
             return EXIT_CODEX_UNUSABLE
         # A leftover report from an earlier run would otherwise certify this one.
@@ -326,52 +518,55 @@ def run_seat(
         # Streaming straight to the log keeps the transcript off KASPER's stdout, and
         # leaves the partial output on disk when a run has to be killed.
         with log.open("w", encoding="utf-8") as transcript:
-            completed = subprocess.run(
+            process = launch(
                 argv,
-                cwd=project,
-                stdin=subprocess.DEVNULL,
                 stdout=transcript,
                 stderr=subprocess.STDOUT,
-                timeout=timeout,
-                check=False,
+                stdin=subprocess.DEVNULL,
+                cwd=project,
             )
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                cleanup = kill_and_wait(process, taskkill)
+                detail = f" (cleanup: {cleanup})" if cleanup else ""
+                print(
+                    f"codex {seat} exceeded {timeout}s and was killed{detail} — transcript: {log}",
+                    file=sys.stderr,
+                )
+                return EXIT_TIMEOUT
     except FileNotFoundError as exc:
         print(f"codex is not runnable ({exc}) — install @openai/codex.", file=sys.stderr)
         return EXIT_CODEX_UNUSABLE
     except OSError as exc:
         print(f"cannot prepare {out} for this run: {exc}", file=sys.stderr)
         return EXIT_BAD_ARGUMENTS
-    except subprocess.TimeoutExpired:
-        print(
-            f"codex {seat} exceeded {timeout}s and was killed — transcript: {log}", file=sys.stderr
-        )
-        return EXIT_TIMEOUT
-
-    if seat == "reviewer":
-        # Findings are data, not a verdict — KASPER reads them from the output file.
-        echo_report(out, REVIEWER_ECHO_LINES, note_overflow=True)
-        return completed.returncode
 
     if seat == "arch-reviewer":
         echo_report(out, REVIEWER_ECHO_LINES, note_overflow=True)
         if not has_report(out):
             print(
-                f"codex exited {completed.returncode} but wrote no report — transcript: {log}",
+                f"codex exited {returncode} but wrote no report — transcript: {log}",
                 file=sys.stderr,
             )
             return EXIT_NO_VERDICT
         return 0
 
-    echo_report(out, TESTER_ECHO_LINES, note_overflow=False)
-    verdict = read_gate_verdict(out)
+    reviewer = seat == "reviewer"
+    echo_report(
+        out,
+        REVIEWER_ECHO_LINES if reviewer else TESTER_ECHO_LINES,
+        note_overflow=reviewer,
+    )
+    verdict = read_verdict(out, seat)
     if verdict is None:
         print(
-            f"codex exited {completed.returncode} but wrote no `GATE:` first line"
-            f" — transcript: {log}",
+            f"codex exited {returncode} but wrote no `{VERDICT_LINES[seat][0]}` or"
+            f" `{VERDICT_LINES[seat][1]}` first line — transcript: {log}",
             file=sys.stderr,
         )
         return EXIT_NO_VERDICT
-    return EXIT_GATE_RED if verdict == "red" else 0
+    return EXIT_FAIL_VERDICT if verdict == "fail" else 0
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -387,7 +582,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--brief",
         type=Path,
         required=True,
-        help="Task brief file, relative to the project root you run this from.",
+        help="Task brief file, relative to the directory you run this from.",
     )
     parser.add_argument(
         "--out",

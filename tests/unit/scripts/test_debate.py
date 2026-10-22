@@ -4,6 +4,7 @@ import argparse
 import io
 import signal
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, call
@@ -195,7 +196,7 @@ def test_run_call_precedence(
     process.wait.side_effect = wait
     monkeypatch.setattr(debate.subprocess, "Popen", popen)
     kill = Mock(return_value=None)
-    monkeypatch.setattr(debate, "kill_group", kill)
+    monkeypatch.setattr(sys.modules["codex_seat"], "kill_group", kill)
     if mode == "stale":
         monkeypatch.setattr(Path, "stat", lambda p: SimpleNamespace(st_mtime=90.0))
     result = debate.run_call(
@@ -373,6 +374,7 @@ def test_canary_stops_next_popen(
     snapshots = Mock(side_effect=[(frozenset(), None), (frozenset({"new"}), None)])
     monkeypatch.setattr(debate, "hook_canary_snapshot", snapshots)
     child = Mock(returncode=0)
+
     def finish(timeout: int) -> int:
         debate_files[Path("report.md.d/propose-A.md")] = answer("propose")
         return 0
@@ -405,7 +407,7 @@ def test_readiness_uses_resolved_executable_and_deadline(
         popen.side_effect = OSError("cannot launch")
     kill = Mock(return_value=None)
     monkeypatch.setattr(debate.subprocess, "Popen", popen)
-    monkeypatch.setattr(debate, "kill_group", kill)
+    monkeypatch.setattr(sys.modules["codex_seat"], "kill_group", kill)
     if mode in ("timeout", "start_error"):
         with pytest.raises(subprocess.TimeoutExpired if mode == "timeout" else OSError):
             debate.vendor_ready("codex", Path("/resolved/codex"))
@@ -484,6 +486,7 @@ def test_windows_without_taskkill_stops_before_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Windows must have tree cleanup available before even probing a vendor."""
+    monkeypatch.setattr(sys.modules["codex_seat"], "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(debate, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(
         debate.shutil, "which", lambda name: None if name == "taskkill" else f"/resolved/{name}"
@@ -515,6 +518,7 @@ def test_windows_taskkill_is_bounded_and_failure_reaches_call_result(
     detail: str | None,
 ) -> None:
     """Tree-kill failures retain the seat timeout and appear in its diagnostic detail."""
+    monkeypatch.setattr(sys.modules["codex_seat"], "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(debate, "sys", SimpleNamespace(platform="win32"))
     process = Mock(pid=123, stdout=Mock())
     process.wait.side_effect = [subprocess.TimeoutExpired("seat", 3), 0]
@@ -526,16 +530,25 @@ def test_windows_taskkill_is_bounded_and_failure_reaches_call_result(
         run.side_effect = OSError("denied")
     monkeypatch.setattr(debate.subprocess, "run", run)
     result = debate.run_call(
-        ["/resolved/cli"], "brief", Path("seat.md"), Path("seat.log"),
-        3, False, lambda text: None, Path("/resolved/taskkill"),
+        ["/resolved/cli"],
+        "brief",
+        Path("seat.md"),
+        Path("seat.log"),
+        3,
+        False,
+        lambda text: None,
+        Path("/resolved/taskkill"),
     )
-    assert debate.KILL_TIMEOUT_SECONDS == 10
+    assert sys.modules["codex_seat"].KILL_TIMEOUT_SECONDS == 10
     assert result.outcome == "timeout"
     assert result.detail == ("3s" if detail is None else f"3s; cleanup failed: {detail}")
     run.assert_called_once_with(
         ["/resolved/taskkill", "/T", "/F", "/PID", "123"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        timeout=10, check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
     )
     assert process.wait.call_args_list == [call(timeout=3), call(timeout=10)]
     process.communicate.assert_not_called()
@@ -550,14 +563,14 @@ def test_posix_group_kill_and_wait_are_bounded(
     kill_fault: str,
 ) -> None:
     """Cleanup waits at most ten seconds even when killpg fails."""
-    monkeypatch.setattr(debate, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(sys.modules["codex_seat"], "sys", SimpleNamespace(platform="linux"))
     process = Mock(pid=123, stdin=None, stdout=None, stderr=None)
     killpg = Mock()
     if kill_fault == "gone":
         killpg.side_effect = ProcessLookupError()
     elif kill_fault == "denied":
         killpg.side_effect = PermissionError("denied")
-    monkeypatch.setattr(debate.os, "killpg", killpg, raising=False)
+    monkeypatch.setattr(sys.modules["codex_seat"].os, "killpg", killpg, raising=False)
     process.wait.return_value = 0
     if wait_timeout:
         process.wait.side_effect = subprocess.TimeoutExpired("child", 10)
@@ -579,12 +592,21 @@ def test_call_records_surviving_child_without_another_wait(
     """A surviving child cannot hide a cleanup failure or block forever."""
     process = Mock(stdin=None, stdout=None, stderr=None)
     process.wait.side_effect = [
-        subprocess.TimeoutExpired("seat", 3), subprocess.TimeoutExpired("cleanup", 10),
+        subprocess.TimeoutExpired("seat", 3),
+        subprocess.TimeoutExpired("cleanup", 10),
     ]
     monkeypatch.setattr(debate, "launch", Mock(return_value=process))
-    monkeypatch.setattr(debate, "kill_group", Mock(return_value="taskkill exit 1"))
+    monkeypatch.setattr(
+        sys.modules["codex_seat"], "kill_group", Mock(return_value="taskkill exit 1")
+    )
     result = debate.run_call(
-        ["cli"], "brief", Path("seat.md"), Path("seat.log"), 3, False, lambda text: None,
+        ["cli"],
+        "brief",
+        Path("seat.md"),
+        Path("seat.log"),
+        3,
+        False,
+        lambda text: None,
     )
     assert result.outcome == "timeout"
     assert result.detail == "3s; cleanup failed: taskkill exit 1; child survived cleanup"
@@ -602,15 +624,13 @@ def test_readiness_surviving_child_is_reported_without_another_wait(
     deadline = subprocess.TimeoutExpired("ready", 30)
     process.wait.side_effect = [deadline, subprocess.TimeoutExpired("drain", 10)]
     monkeypatch.setattr(debate, "launch", Mock(return_value=process))
-    monkeypatch.setattr(debate, "kill_group", Mock(return_value=None))
+    monkeypatch.setattr(sys.modules["codex_seat"], "kill_group", Mock(return_value=None))
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         debate.vendor_ready("codex", Path("/resolved/codex"))
     assert caught.value is deadline
     assert process.wait.call_args_list == [call(timeout=30), call(timeout=10)]
     process.communicate.assert_not_called()
-    assert capsys.readouterr().err == (
-        "codex readiness cleanup failed: child survived cleanup\n"
-    )
+    assert capsys.readouterr().err == ("codex readiness cleanup failed: child survived cleanup\n")
 
 
 @pytest.mark.parametrize("writes_out", [False, True])
@@ -633,8 +653,9 @@ def test_call_passes_file_handles_to_popen_without_pipes(
     process.wait.return_value = 0
     popen = Mock(return_value=process)
     monkeypatch.setattr(debate.subprocess, "Popen", popen)
-    debate.run_call(["cli"], "brief", Path("seat.md"), Path("seat.log"),
-                    3, writes_out, lambda text: None)
+    debate.run_call(
+        ["cli"], "brief", Path("seat.md"), Path("seat.log"), 3, writes_out, lambda text: None
+    )
     kwargs = popen.call_args.kwargs
     assert kwargs["stdin"] is handles[Path("seat.md.prompt")]
     assert kwargs["stdout"] is handles[Path("seat.log" if writes_out else "seat.md")]

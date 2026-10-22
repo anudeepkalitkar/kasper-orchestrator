@@ -239,3 +239,51 @@ def test_cli_unreadable_file_returns_two(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "cannot read brief:" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("never touch the ledger", 0),
+        ("migrate the ledger", 1),
+        ("not now. migrate the ledger", 1),
+        ("ledger must not change", 1),
+        ("not " + "x" * 41 + " ledger", 1),
+        ("not ledger; " + "x" * 41 + " migrate ledger", 1),
+        ("not ledger. ledger", 1),
+        ("notebook ledger", 1),
+        ("never touch ledger; migrate ledger", 1),
+        ("never touch. ledger", 1),
+        ("never touch one two three four ledger", 0),
+        ("never touch one two three four five ledger", 1),
+        ("never touch " + "x" * 80 + " ledger", 0),
+        ("ledger; never touch it", 1),
+        ("not " + "x" * 35 + " ledger", 1),
+        ("not " + "x" * 36 + " ledger", 1),
+    ],
+)
+def test_risk_exclusion_requires_prohibition_and_action(
+    model_route: ModuleType, text: str, expected: int
+) -> None:
+    """Unnegated occurrences still count even beside negated occurrences."""
+    assert model_route.count_phrases(text, ("ledger",)) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "risk"),
+    [
+        ("never touch the ledger", 2),
+        ("migrate the ledger", 2),
+        ("no downtime migration; avoid data loss in the delete path", 6),
+        ("never delete files", 2),
+        ("do not edit docs and implement migration", 2),
+        ("never touch auth, then add a migration", 4),
+        ("do not change the ledger", 2),
+        ("do not edit docs implement migration", 2),
+        ("Do not run without auth", 2),
+        ("Do not change behavior during migration", 2),
+    ],
+)
+def test_negation_reaches_risk_score(model_route: ModuleType, text: str, risk: int) -> None:
+    """The externally reported risk preserves the specified two-point weight."""
+    assert model_route.score_brief(text).risk == risk

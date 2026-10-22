@@ -70,7 +70,9 @@ def seat_project(codex_seat: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Pat
     # argparse's gettext lookup otherwise probes locale files on every parse.
     monkeypatch.setattr(codex_seat.argparse, "_", lambda message: message)
     monkeypatch.setattr(Path, "cwd", Mock(return_value=project))
-    monkeypatch.setattr(Path, "is_dir", lambda path: path == project / ".git")
+    monkeypatch.setattr(codex_seat, "find_project_root", Mock(return_value=project))
+    monkeypatch.setattr(Path, "resolve", lambda path: path)
+    monkeypatch.setattr(codex_seat.shutil, "which", lambda name: name)
     return project
 
 
@@ -115,6 +117,8 @@ def seat_process(codex_seat: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Moc
     """Replace subprocess.run with a recording fake; never launch Codex."""
     run = Mock(return_value=Mock(returncode=0))
     monkeypatch.setattr(codex_seat.subprocess, "run", run)
+    monkeypatch.setattr(codex_seat, "launch", Mock(return_value=Mock(wait=Mock(return_value=0))))
+    monkeypatch.setattr(codex_seat, "kill_and_wait", Mock(return_value=None))
     return run
 
 

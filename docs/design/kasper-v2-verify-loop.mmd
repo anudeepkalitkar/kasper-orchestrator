@@ -1,0 +1,11 @@
+%% Source for the verify-loop diagram in docs/design/kasper-v2.md
+flowchart LR
+    dev[developer implements] --> tester[tester seat<br/>GATE: green / red]
+    tester -- "exit 0 (green)" --> reviewer[reviewer seat<br/>REVIEW: approve / changes]
+    tester -- "exit 1 (red)<br/>round +1" --> fix[developer re-entry<br/>fix the root cause / the class]
+    reviewer -- "exit 1 (changes)<br/>round +1" --> fix
+    fix --> tester
+    reviewer -- "exit 0 (approve)" --> land[git-workflow<br/>checkpoint, PR, ready to land]
+    tester -- "exit 2/4/5: retry once<br/>exit 3: stop" --> stop[blocked / parked]
+    reviewer -- "exit 2/4/5: retry once<br/>exit 3: stop" --> stop
+    fix -- "rounds = cap" --> stop

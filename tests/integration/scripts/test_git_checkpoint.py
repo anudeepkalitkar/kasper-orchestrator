@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.helpers.git import git
-from tests.helpers.hooks import script_path
+from tests.helpers.hooks import load_script, script_path
 
 
 def checkpoint(repo_root: Path, repo: Path, message: str) -> subprocess.CompletedProcess[str]:
@@ -87,6 +87,10 @@ def test_refuses_every_pending_local_path_without_mutation(
     if state == "changed":
         git(checkpoint_repo, "commit", "-m", "fixture baseline")
         file.write_text("changed placeholder\n", encoding="utf-8")
+    if path.startswith("docs/adr/"):
+        (checkpoint_repo / ".git/info/exclude").write_text("/docs/adr/\n", encoding="utf-8")
+        if state == "untracked":
+            git(checkpoint_repo, "add", "--force", "--", path)
     (checkpoint_repo / "safe.txt").write_text("safe\n", encoding="utf-8")
     before_head = git(checkpoint_repo, "rev-parse", "HEAD")
     before_status = git(checkpoint_repo, "status", "--porcelain=v1", "-z")
@@ -114,3 +118,54 @@ def test_empty_stdin_refused(repo_root: Path, checkpoint_repo: Path) -> None:
     assert result.returncode == 2
     assert "message is required" in result.stderr
     assert git(checkpoint_repo, "diff", "--cached", "--name-only") == ""
+
+
+def test_only_commits_declared_adr_and_leaves_other_changes_unstaged(
+    repo_root: Path,
+    checkpoint_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a local-only exclude entry an explicitly selected ADR is committable."""
+    adr = checkpoint_repo / "docs/adr/decision.md"
+    adr.parent.mkdir(parents=True)
+    adr.write_text("Decision", encoding="utf-8")
+    (checkpoint_repo / "other.py").write_text("pending", encoding="utf-8")
+    monkeypatch.chdir(checkpoint_repo)
+    module = load_script(repo_root, "git_checkpoint")
+    assert module.main(["record decision", "--no-push", "--only", "docs/adr/decision.md"]) == 0
+    assert git(checkpoint_repo, "show", "--pretty=", "--name-only", "HEAD").strip() == (
+        "docs/adr/decision.md"
+    )
+    assert git(checkpoint_repo, "diff", "--cached", "--name-only") == ""
+    assert git(checkpoint_repo, "status", "--porcelain").strip() == "?? other.py"
+
+
+def test_only_refuses_prestaged_rename_from_undeclared_path(
+    repo_root: Path, checkpoint_repo: Path
+) -> None:
+    """Both sides of a rename must be authorized before any index or HEAD mutation."""
+    (checkpoint_repo / "other.py").write_text("value = 1\n", encoding="utf-8")
+    git(checkpoint_repo, "add", "other.py")
+    git(checkpoint_repo, "commit", "-m", "seed original")
+    git(checkpoint_repo, "mv", "other.py", "allowed.py")
+    before_head = git(checkpoint_repo, "rev-parse", "HEAD")
+    before_index = git(checkpoint_repo, "diff", "--cached", "--binary")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script_path(repo_root, "git_checkpoint")),
+            "must refuse",
+            "--no-push",
+            "--only",
+            "allowed.py",
+        ],
+        cwd=checkpoint_repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "other.py" in result.stderr
+    assert git(checkpoint_repo, "rev-parse", "HEAD") == before_head
+    assert git(checkpoint_repo, "diff", "--cached", "--binary") == before_index

@@ -48,10 +48,10 @@ around a prompt.
    brief at spawn time and passed as the Agent tool's `model`; agent files pin no model,
    and a spawn that passes none inherits the session's own — the most expensive.
 
-## KASPER — one session, eight agents and three Codex seats
+## KASPER — one session, nine agents and three Codex seats
 
 `/kasper` ([skills/kasper/SKILL.md](skills/kasper/SKILL.md)) turns the session it
-is typed in into the project's KASPER. It raises nothing: the eight Claude disciplines are
+is typed in into the project's KASPER. It raises nothing: the nine Claude disciplines are
 **subagents of that session**, spawned per task with the Agent tool — each at the model tier
 `model_route.py` scores from its brief, since no agent file pins one; the three verification
 seats are Bash calls into the OpenAI Codex CLI, not agents. Chain law: human → KASPER →
@@ -61,7 +61,7 @@ that same agent with the answer. Permission prompts, an agent's included, surfac
 in KASPER's session and the human answers them there.
 
 The roster ([agents/](agents/)) — four developers, each of which never touches
-`tests/` and never commits, plus four supporting disciplines:
+`tests/` and never commits, plus five supporting disciplines:
 [python-developer](agents/python-developer.md) (Python, carrying FastAPI,
 SQLAlchemy 2 + Alembic, Celery, PyTorch/OCR and boto3 as sections) ·
 [typescript-developer](agents/typescript-developer.md) (TypeScript — Node
@@ -70,8 +70,10 @@ servers, React 19 + Vite, Next 16) ·
 plans and reports, never applies) ·
 [devops-developer](agents/devops-developer.md) (Dockerfiles, compose, GitHub
 Actions, shell — builds locally, never pushes an image or deploys) ·
+[triager](agents/triager.md) (turns a goal into a plan tree of parallel nodes; plans only) ·
 [architect](agents/architect.md) (turns a goal into a design spec in
-`docs/design/` and a proposed ADR; docs only, never code or tests) ·
+`docs/design/` and a proposed ADR — only for a new data model, a new external contract, three or
+more components, or on the human's ask; docs only, never code or tests) ·
 [documentor](agents/documentor.md) (owns the written truth; docs
 only) · [git-workflow](agents/git-workflow.md) (the only committer; merges
 human-approved always; structurally `Write`/`Edit`-less) ·
@@ -79,18 +81,19 @@ human-approved always; structurally `Write`/`Edit`-less) ·
 
 Verification is not a subagent. The **tester**, **code-reviewer**, and **arch-reviewer** are
 seats on the OpenAI Codex CLI, run headless by one ledger-gated Bash call —
-`python3 .claude/scripts/codex_seat.py tester|reviewer|arch-reviewer --brief <file> --out <file>
+`python3 "$HOME/.claude/scripts/codex_seat.py" tester|reviewer|arch-reviewer --brief <file> --out <file>
 [--stack <name>...]` ([codex_seat.py](scripts/codex_seat.py)) — whose prompt is the seat's
 role file in [codex/](codex/), then one stack section from [codex/stacks/](codex/stacks/)
 per `--stack` the call names — which is what makes a seat language-aware — then the brief
-KASPER wrote. **One verify pass per task, not per subtask:**
+KASPER wrote. **One verify loop per task, not per subtask:**
 the developer implements the task, the tester seat authors the tests and runs the
-gate, the reviewer seat judges the diff; the arch-reviewer seat judges a design spec or a proposed
+gate, the reviewer seat judges the diff (`REVIEW: approve` or `REVIEW: changes`), and a red or a
+`changes` sends the developer back for a bounded round (cap 3); the arch-reviewer seat judges a design spec or a proposed
 ADR before any of it is built. The tester's report opens `GATE: green` or
 `GATE: red`; the script exits 0 green · 1 red · 2 bad arguments · 3 Codex not signed in (the
 human runs `codex login`) · 4 timeout · 5 no verdict. Owner ≠ verifier now also means
 vendor ≠ vendor. When KASPER judges a question contested (the trigger in the skill's step 3),
-`python3 .claude/scripts/debate.py architect --brief <file> --out <file>`
+`python3 "$HOME/.claude/scripts/debate.py" architect --brief <file> --out <file>`
 ([debate.py](scripts/debate.py), prompts in [debate/](debate/)) runs a Claude +
 Codex debate — propose → anonymised critique → Fable judge — and hands KASPER one report; the
 architect agent then authors `docs/design/` from it and the arch-reviewer seat judges as before.
@@ -107,7 +110,8 @@ local web apps.
 [/new-task](commands/new-task.md) (scaffold a task doc) ·
 [/checkpoint](commands/checkpoint.md) (commit+push a subtask; refuses shared
 branches) · [/until-green](commands/until-green.md) (loop tests until green) ·
-[/permit](commands/permit.md) (curate the permission ledger).
+[/permit](commands/permit.md) (curate the permission ledger) ·
+[/overnight](commands/overnight.md) (`on|off` — keep KASPER working through `tasks/BACKLOG.md`).
 
 ## Hooks ([settings.json](settings.json) → [scripts/](scripts/))
 
@@ -129,7 +133,8 @@ Every hook command runs through one dispatcher —
   [autoformat.py](scripts/autoformat.py) (ruff format).
 - Notification/Stop → [notify.py](scripts/notify.py) (a native system sound per
   event — macOS Glass/Funk, the Windows and freedesktop equivalents — with the bundled
-  `notify.wav` as the fallback).
+  `notify.wav` as the fallback). Stop → [overnight.py](scripts/overnight.py) (keeps a session
+  that ran `/overnight on` working through the backlog; silent otherwise).
 - Command helpers: [git_checkpoint.py](scripts/git_checkpoint.py) (backs
   `/checkpoint`) · [new_task.py](scripts/new_task.py) (backs `/new-task`). Beside them,
   [codex_seat.py](scripts/codex_seat.py) runs a Codex verification seat,
@@ -144,9 +149,9 @@ Every hook command runs through one dispatcher —
 
 Everything above lives beside this file, under `~/.claude/` — the Codex seat prompts in
 `codex/` and the debate prompts in `debate/` among them. The source of truth is the
-kasper-orchestrator repo — the project's only home; that repo is public, so its decision record
-lives in the clone's local, git-excluded `docs/adr/`, never in the repo itself — in a private repo
-the hook leaves `docs/adr/` tracked and the ADRs are committed with the code. Change the config there
+kasper-orchestrator repo — the project's only home. Its decision record lives in the clone's
+local, git-excluded `docs/adr/`: the hook excludes `docs/adr/` unless the repo is private, and a
+checkpoint stages ADRs only where the exclude file lacks the entry. Change the config there
 and run its `install.py` to bring this home up to date; never hand-edit this home copy and
 expect it to survive — an install replaces the files it owns (backing up what it overwrites)
 — and never let a session rewrite it silently.

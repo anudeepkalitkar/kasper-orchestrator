@@ -215,7 +215,7 @@ def test_surviving_grandchild_holding_stdout_does_not_block_report(
     """Failed tree cleanup remains bounded even while descendants retain stdout handles."""
     (debate_project / "mode.txt").write_text("grandchild", encoding="utf-8")
     survivors: list[subprocess.Popen[str]] = []
-    real_kill = debate.kill_group
+    real_kill = sys.modules["codex_seat"].kill_group
     taskkill = shutil.which("taskkill") if sys.platform == "win32" else None
     taskkill_path = Path(taskkill) if taskkill else None
 
@@ -223,13 +223,13 @@ def test_surviving_grandchild_holding_stdout_does_not_block_report(
         survivors.append(process)
         return "controlled tree kill failure"
 
-    monkeypatch.setattr(debate, "kill_group", failed_kill)
+    monkeypatch.setattr(sys.modules["codex_seat"], "kill_group", failed_kill)
     started = time.monotonic()
     try:
         assert debate.main(ARGS + ["--timeout", "1", "--seat", "claude:a",
                                    "--seat", "codex:b"]) == 5
         elapsed = time.monotonic() - started
-        assert elapsed < 1 + debate.KILL_TIMEOUT_SECONDS + 5
+        assert elapsed < 1 + sys.modules["codex_seat"].KILL_TIMEOUT_SECONDS + 5
         assert len(survivors) == 2
         report = (debate_project / "report.md").read_text(encoding="utf-8")
         assert report.startswith("DEBATE: failed\n")

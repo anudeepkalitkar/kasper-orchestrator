@@ -31,6 +31,6 @@ prompting. Apply what the user approves, then truncate the log.
 ## Always
 - Edit the JSON directly (it's small); keep it valid — atomic in intent, one coherent change.
 - After any edit, run a quick sanity check:
-  `echo '{"tool_name":"Bash","tool_input":{"command":"<representative command>"}}' | python3 .claude/scripts/bash_permission_gate.py`
+  `echo '{"tool_name":"Bash","tool_input":{"command":"<representative command>"}}' | python3 "$HOME/.claude/scripts/bash_permission_gate.py"`
   and confirm the decision matches the user's intent before reporting done.
 - Never remove or weaken an `ask_patterns` guard without the user explicitly confirming that exact guard.

@@ -1,95 +1,59 @@
 # Rule: Boundaries — filesystem, network, and the permission ledger (FOREMOST — never break)
 
-**This is the highest-priority rule. It overrides convenience, speed, and every other rule.**
-The machine and the internet are the user's; work stays inside the envelope below, and a violation
-is a serious error, not a minor slip.
+**The highest-priority rule: it overrides convenience, speed, and every other rule.** A violation
+is a serious error, not a slip.
 
 ## Filesystem — write only inside the summoned project root
 Allowed without asking:
-1. **The project root** — the folder where Claude/KASPER was summoned (the session's working
-   directory), read/write, all subfolders. Everything the session creates stays inside it:
-   memory in `<root>/claude-memory/`, temp/scratch in `<root>/claude-temp/` — both created by
-   the SessionStart hook (`project_dirs.py`), which also keeps them and `/tasks/` out of git
-   through the repo's **local** `.git/info/exclude` — never the project's shared `.gitignore`,
-   because a personal rule must not dirty someone else's checkout. `/docs/adr/` joins them only
-   where the decision record stays local: the hook asks `gh` for the repo's visibility once per
-   session and, in a `PRIVATE` repo, leaves that entry out (dropping one an earlier run wrote) so
-   the ADRs are committed with the code. The doc dirs are excluded only, created on demand.
-   The hook also points the harness memory path at the project's folder. Nothing cleans scratch up: `claude-temp/` accumulates across
-   sessions, and emptying it is the human's to do, by hand, whenever they choose.
-2. **Reads anywhere non-sensitive** — library code, installed packages, docs.
+1. **The project root** — the session's working directory, read/write. Memory goes in
+   `<root>/claude-memory/`, scratch in `<root>/claude-temp/`; both are created by the SessionStart
+   hook (`project_dirs.py`), which keeps them and `/tasks/` out of git through the repo's **local**
+   `.git/info/exclude` — never the shared `.gitignore`. `/docs/adr/` joins them only where the
+   decision record stays local: the hook asks `gh` for the repo's visibility once per session and,
+   in a `PRIVATE` repo, leaves that entry out (dropping one an earlier run wrote). It also points
+   the harness memory path at the project's folder. Nothing cleans scratch up; the human clears
+   `claude-temp/` by hand.
+2. **Reads anywhere non-sensitive.**
 
-Ask-first — every write outside the root, every time:
-- Other projects, the home dir, system locations, bare `/tmp` — a session works only in the
-  folder it was invited into.
-- **`~/.claude/` (the global config): read freely, edit only with permission.** The sessions
-  governed by the config never rewrite it silently. Config development happens in the
-  kasper-orchestrator repo (where `.claude/` is the project's own tree), then lands
-  globally by copying it into `~/.claude/`.
-- **Sensitive reads stay ask-first**: credentials and dotfiles (`~/.ssh`, `~/.aws`, `~/.gnupg`,
-  `~/.kube`, `~/.netrc`, `~/.zshrc`, …), `/etc` and system config, anything obviously private.
-  When in doubt whether a read is sensitive — ask.
-- **One scoped exception:** the Codex **tester seat** runs under `--sandbox workspace-write`,
-  whose envelope the CLI states as workdir + `/tmp` + `$TMPDIR` — verified 2026-09-16, with
-  `.git/`, `$HOME`, and the network all blocked. That `/tmp` write is accepted for that seat
-  only; everywhere else bare `/tmp` stays ask-first.
-- When permission is needed, name the exact path and why, then wait. A grant for one path/one
-  time is not a blanket grant.
-- Tool commands respect this too: no `cp`/`mv`/`rm`/redirects targeting outside paths without
-  permission. Tools operating *within* the root (git, docker, npm) are fine.
+Ask first — every write outside the root, every time: other projects, the home dir, system
+locations, bare `/tmp`. **`~/.claude/` is read freely, edited only with permission**; config is
+developed in the kasper-orchestrator repo and installed by `install.py`. **Sensitive reads stay
+ask-first**: credentials and dotfiles (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`,
+`~/.zshrc`, …), `/etc`, anything obviously private. Name the exact path and why, then wait; a
+grant for one path/one time is not a blanket grant. No `cp`/`mv`/`rm`/redirects to outside paths.
+
+**One scoped exception:** the Codex **tester seat** runs under `--sandbox workspace-write` (workdir
++ `/tmp` + `$TMPDIR`; `.git/`, `$HOME` and the network blocked — verified 2026-09-16). That `/tmp`
+write is accepted for that seat only.
 
 ## Network — reads free, writes deny-by-default
-**Reading the internet is investigation; writing to it is publishing** (it may be cached or
-indexed even if deleted, and some writes cost money).
+Reads are free: web search/fetch, cloning public repos, downloading packages into the project,
+read-only API calls. **Writes** are publishing (cached, indexed, sometimes paid); standing
+exceptions only:
+1. `git push` to feature branches of the user's own repos ([[git-workflow]]).
+2. `gh` ops on the user's own repos that support the workflow: PR comments, own-PR descriptions,
+   opening the task's PR. Merging stays human.
+3. Calls the project's own code makes with already-configured credentials. A loop hammering a paid
+   API is an escalation, not a default.
 
-Reads allowed without asking: web search/fetch, cloning public repos, downloading
-packages/models into the project, read-only API calls (`gh pr list`, registry lookups).
+Everything else asks first — external posts, paid APIs beyond the configured path, cloud changes,
+publishing, email, webhooks. When unsure whether a call is a write (a POST that "just queries"),
+treat it as one. **Loop charters declare their network writes (host + operation)**; an undeclared
+one escalates. **Secrets never leave the machine** except to the service they belong to.
 
-Writes — deny by default. **Standing exceptions only:**
-1. `git push` to feature branches of the user's own repos (chartered loops included; shared
-   branches/merges stay human) — see [[git-workflow]].
-2. `gh` ops on the user's own repos that support the workflow: PR comments/replies, re-running
-   checks, editing own PR descriptions, opening the task's PR to `development`. Merging stays
-   human, always.
-3. Calls the project's own code makes when run/tested with already-configured credentials.
-   Watch spend — a loop hammering a paid API is an escalation, not a default.
+## Permission ledger — prompt once per genuinely new thing
+`.claude/permissions-ledger.json` is the single source of truth for what Bash may auto-run.
+- **Gate** (`bash_permission_gate.py`, PreToolUse): decomposes any command and auto-allows when
+  every part is covered. Guards force a prompt and beat every allow and grant: `ask_words` (a tool
+  plus guarded words — `git` + `merge`) and `ask_patterns` (regex). Unknowns fall through to a
+  one-time prompt and are logged to `.claude/permission-unknowns.log`.
+- **Recorder** (`permission_recorder.py`, PostToolUse): a granted prompt becomes a `grant`;
+  destructive/outward heads (`rm`, `curl`, `ssh`, `bash`, `open`, non-feature `git push`, …) never
+  auto-promote. **`/permit`** curates by hand.
 
-Everything else asks first, every time: posting to external services, paid API calls beyond the
-project's configured path, creating/modifying cloud resources, publishing packages, email,
-webhooks. A grant for one write is not a blanket grant. When in doubt whether something is a
-write (a POST that "just queries"), treat it as a write. **Loop charters must declare their network writes explicitly** (host + operation); an
-undeclared write is out of scope → stop and escalate ([[autonomous-workflow]]).
+Compose from allowed forms (WebFetch over `curl`); never restructure a command to evade a guard.
+Record denials with the why (`/permit --deny`). Grants widen, guards don't: `ask_words` and
+`ask_patterns` weaken only on the user's explicit instruction, and a wrong entry is fixed, not
+worked around. The ledger governs prompting, not policy.
 
-**Secrets never leave the machine** except to the service they belong to: no keys/tokens/env
-values in payloads, logs, error reports, or pasted output.
-
-## Permission ledger — prompt once per genuinely new thing, never again
-**`.claude/permissions-ledger.json` is the single source of truth for what Bash may auto-run
-and what must be confirmed.** The moving parts:
-- **Gate** (`.claude/scripts/bash_permission_gate.py`, PreToolUse on Bash): decomposes any command —
-  compounds, pipelines, env prefixes, wrappers, loops, substitutions — and auto-allows when
-  every part is covered. Guards force a prompt showing the ledger's note and beat every allow
-  and grant: `ask_words` (a tool plus guarded words, matched on the part's tokens so no option
-  value can hide them — `git` + `merge`, `gh` + `secret` + `set`) and `ask_patterns` (regex).
-  Unknowns fall
-  through to a one-time prompt and are logged to `.claude/permission-unknowns.log`.
-- **Recorder** (`.claude/scripts/permission_recorder.py`, PostToolUse on Bash): a granted prompt is
-  promoted into `grants` so the same command never prompts twice. Destructive/outward heads
-  (`rm`, `curl`, `ssh`, `bash`, `open`, non-feature `git push`, …) are never auto-promoted.
-- **`/permit`**: curate by hand (add, deny with the user's reasoning, list, review the unknowns log).
-
-Requirements:
-1. **Consult before prompting** — compose work from already-allowed forms (e.g. WebFetch over
-   `curl` for reads). A guarded pattern's prompt is deliberate — never restructure a command to
-   evade a guard.
-2. **Record denials with the why** (`/permit --deny`) so the next prompt shows the user's own words
-   and variants aren't re-attempted.
-3. **Grants widen, guards don't.** `allow_keys`/`grants`/`allow_patterns` grow from approvals;
-   `ask_words`/`ask_patterns` are weakened only by the user's explicit instruction.
-   Keep it healthy: when `permission-unknowns.log` accumulates, offer `/permit --review`; a wrong
-   ledger entry gets fixed, not worked around.
-4. **The ledger governs prompting, not policy** — the filesystem/network boundaries above apply
-   unchanged; an allowed key is not a license to break them.
-
-Related: [[git-workflow]] (the push exception), [[autonomous-workflow]] (loops declare their
-writes; unattended runs live inside the ledger envelope).
+Related: [[git-workflow]], [[autonomous-workflow]].

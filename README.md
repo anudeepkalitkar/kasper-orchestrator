@@ -4,8 +4,8 @@
 
 One Claude Code session that runs your project: you talk to it, it delegates the real work
 to discipline **subagents** — four developers (Python, TypeScript, Terraform, DevOps),
-architect (designs into `docs/design/`), documentor, git-workflow, researcher — and to three
-verification seats that run on the OpenAI Codex CLI: tester and code-reviewer once per task, and
+triager (plans a task into parallel nodes), architect (designs into `docs/design/` when a task needs it), documentor, git-workflow, researcher — and to three
+verification seats that run on the OpenAI Codex CLI: tester and code-reviewer in a bounded verify loop per task, and
 arch-reviewer on a design before it is built. It keeps the task doc while they work. Claude Code
 is the mechanism; KASPER is a skill, a set of agent definitions, standing rules, and a few hook
 scripts.
@@ -91,13 +91,13 @@ cd <project> && claude       # then type /kasper
 ```
 
 That session is now `<Project>'s KASPER`. Ask it for anything: it answers questions
-directly and delegates real work, one task per agent, reporting back tersely — a short
-digest, with the full evidence written under the session's own scratch dir —
+directly and delegates real work, one task per agent, reporting back in plain language, with the full evidence written under the session's own scratch dir —
 `claude-temp/sessions/<session-id>/`, created by the SessionStart hook and named in the
 session's context, reports landing in its `reports/`. Permission prompts — including
 ones raised inside an agent — surface right there for you to answer; the ledger decides
 what never needs asking. The one that writes code is never the one that verifies it —
-verification is a single pass per task, run on Codex — only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
+verification is one loop per task (tester, then reviewer, capped rounds), run on Codex — only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
+KASPER `/overnight on` (with open items in `tasks/BACKLOG.md`) and it keeps working unattended, parking what it cannot finish and leaving `tasks/morning-<date>.md`; landing stays yours. Tell
 KASPER to end when you're done: it writes the session's memory and stops. Nothing is
 cleaned up for you — `claude-temp/` accumulates across sessions, and clearing it is
 yours to do whenever you like.

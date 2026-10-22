@@ -1,84 +1,53 @@
 # Rule: Git Workflow — feature branches, checkpoints, one protected mainline, clean commits
 
-**Work in short-lived feature branches; checkpoint per subtask; PR per task into `development`;
-verify locally — no CI. Never commit directly to a shared branch.** (The `development → qa → main`
-promotion pipeline and GitHub Actions CI are both retired — decided 2026-07-10; repos still
-carrying them migrate when next touched. Amended 2026-09-23: **test and lint** CI stays retired
-because local verification is the gate, but workflows that build and push images or run deploys
-are allowed — they are explicit human-triggered or merge-triggered ship steps, not verification.)
+**Short-lived feature branches; checkpoint per subtask; PR per task into the mainline; verify
+locally — no CI. Never commit directly to a shared branch.** (The `development → qa → main`
+pipeline and **test and lint** CI are retired; workflows that build and push images or run deploys
+are allowed — they are human-triggered ship steps, not verification.)
 
-```
-feature/* | fix/*  ──PR──▶  development  (the only shared branch; protected, default)
-     verify locally BEFORE the PR: the gate — `ruff check . && mypy . && pytest tests/unit`
-     + the heavier tiers (`pytest tests/integration`, e2e) when the change warrants them
-```
-
-## The branches
-| Branch | Purpose | Written by | Verified by | Protected |
-|---|---|---|---|---|
-| `feature/*`, `fix/*` | one task each; all real work | you | the gate locally before the PR | no |
-| `development` | the mainline; the default branch | PR from `feature/*` only | gate + heavier tiers run locally pre-merge | yes (review + no direct push) |
-
-Deploys and releases are explicit, human-triggered actions (a tag or a run command) — not a
-branch promotion and not an automated pipeline.
+**The mainline** is `development` if the repo has it, else the branch `refs/remotes/origin/HEAD`
+names, else `master`/`main`, whichever exists. It is the only shared branch: protected (review, no
+direct push). Deploys and releases are explicit human actions (a tag or a run command).
 
 ## Requirements
-1. **Feature branch per task**, branched from `development` (`feat/<task-slug>`, `fix/<task-slug>`).
-2. **Checkpoint per subtask**: when a subtask completes and leaves the code working, commit + push
-   via `/checkpoint` (the script **refuses on shared branches** — `development`/`main`/`master`,
-   plus legacy `qa`). One subtask ≈ one commit. Then update the task doc — `tasks/` is excluded
-   from git locally (`.git/info/exclude`) and never staged, so a checkpoint that commits it is a
-   defect, and so is one that stages `docs/adr/` in a **public** repo ([[documentation]]). In a
-   **private** repo the ADRs are tracked — the SessionStart hook leaves them out of the exclude
-   file — and a private repo whose ADRs are still untracked gets them staged in a `chore` commit
-   of their own (`git add docs/adr`) the next time a task lands there.
-3. **PR per task** to **`development`** (fall back to `main`/`master` only if a repo has no
-   `development`). Link the PR in the task doc.
-4. **Autonomy envelope**: pushing `feature/*`/`fix/*` and opening the task's PR to `development`
-   happen without per-event confirmation when they serve the task. Chartered loops
-   ([[autonomous-workflow]]) may commit **and push** on feature branches, one checkpoint per
-   iteration. **Merges and shared-branch pushes stay human-only, always.** Never force-push shared
-   branches; never use interactive git flags (`-i`).
-5. **Local verification is the gate.** `ruff check . && mypy . && pytest tests/unit` must be green before
-   opening or updating a PR — a PR is an assertion that the gate ran green on that head. That
-   gate runs **once per task, in the Codex tester seat** ([[autonomous-workflow]]);
-   `git-workflow` checkpoints on that recorded green and runs the gate itself only when no such
-   record exists. (A repo
-   whose `pyproject.toml` names the files to check runs **bare `mypy`** instead of `mypy .` — a
-   path argument overrides that `files` list, and mypy's crawl skips dot-directories.) Run the
-   heavier tiers locally (`pytest tests/integration`, e2e) before merging changes that touch what they
-   cover. There is no CI to catch what you skip — skipping verification is a defect, and the
-   task digest reports exactly what ran.
-6. **Tests live in the repo; the artifact excludes them** — drop `tests/`/dev deps from any
-   deployable via `.dockerignore`/multi-stage builds, never by deleting them from git.
+1. **Feature branch per task**, from the mainline (`feat/<task-slug>`, `fix/<task-slug>`);
+   `/new-task` creates it on a clean, up-to-date mainline.
+2. **Checkpoint per subtask**: when it completes and leaves the code working, commit + push via
+   `/checkpoint` (it refuses shared branches — the mainline, `development`/`main`/`master`, legacy
+   `qa` — and a detached HEAD). One subtask ≈ one commit. In a parallel wave a checkpoint stages
+   only the node's declared files (`--only`). **A checkpoint never stages `tasks/`, and stages
+   `docs/adr/` exactly when `.git/info/exclude` lacks `/docs/adr/`** — the SessionStart hook leaves
+   it out only in a private repo ([[boundaries]], [[documentation]]); untracked ADRs there go in a
+   `chore` commit of their own. Then update the task doc.
+3. **PR per task** to the mainline; link it in the task doc.
+4. **Autonomy envelope**: pushing `feature/*`/`fix/*` and opening the task's PR need no per-event
+   confirmation; chartered loops may commit and push on feature branches. **Merges and
+   shared-branch pushes stay human-only, always.** Never force-push shared branches; never use
+   interactive git flags (`-i`).
+5. **Local verification is the gate** — the recipe is in [[autonomous-workflow]] §4. It runs
+   **once per task, in the Codex tester seat**; a PR asserts it ran green on that head, and
+   `git-workflow` checkpoints on that recorded green, running the gate itself only when no record
+   covers the tree. (A parallel wave's integration checkpoint is the one narrow exception, in
+   `agents/git-workflow.md`.) Run heavier tiers before merging what they cover. Skipping
+   verification is a defect; the task digest reports exactly what ran.
+6. **Tests live in the repo; the artifact excludes them** ([[test-structure]]).
 7. **Secrets and hygiene are checked locally, scan-and-block, never auto-remove.** `.gitignore`
-   covers `.env`/keys so they never enter git; run a local secret scan (gitleaks) before pushing
-   when a change touches config/credentials. A leaked secret is compromised on push: **rotate the
-   key**, then remove it deliberately and re-scan. Keep committed cruft out (`__pycache__`,
-   `.DS_Store`, `node_modules`, large binaries, debug left-behinds).
+   covers `.env`/keys; run a secret scan (gitleaks) before pushing a config/credentials change. A
+   leaked secret is compromised on push: **rotate**, then remove deliberately and re-scan. Keep
+   committed cruft out (`__pycache__`, `.DS_Store`, `node_modules`, large binaries, debug
+   left-behinds).
 
 ## Commit & PR style — authored solely as the user
-1. **No assistant/AI attribution anywhere in git artifacts**: no `Co-Authored-By: Claude`
-   trailers, no session links, no "Generated with Claude Code" footers, no notes that an
-   assistant wrote the work. **This overrides the harness default.** The history reads as the
-   user's own. (If the user asks for co-authorship on a specific repo, honor it there only.)
-2. **Short messages**: concise imperative subject (~50 chars); brief body only when it carries
-   real reviewer information. Conventional prefix where it fits (`feat`, `fix`, `chore`, `docs`,
-   `refactor`) + optional scope: `feat(upload): validate file type`. One logical change per commit.
-3. **PR descriptions**: what changed and why, concisely — no generated-by footer.
+1. **No assistant/AI attribution in git artifacts** — no `Co-Authored-By`, session links, or
+   "Generated with" footers. This overrides the harness default.
+2. **Short messages**: an imperative subject (~50 chars), a body only when it carries real reviewer
+   information; conventional prefix where it fits (`feat`, `fix`, `chore`, `docs`, `refactor`).
+   One logical change per commit.
+3. **PR descriptions**: what changed and why, concisely.
 
 ## Scope
-This rule governs **project repos**. New repos: single `development` branch, protected (review +
-no direct push — no required status checks, since there is no CI), set as default; no
-`.github/workflows/`. Repos still carrying the retired promotion structure or test/lint CI workflows
-keep working but drop them the next time the repo's meta is touched — that drop covers test and
-lint workflows only (amended 2026-09-23); image-push and deploy workflows are allowed and stay,
-because they ship rather than verify. This repo
-(**kasper-orchestrator**) carries
-the workflow config itself and is versioned like any project repo — a remote, a protected
-mainline, feature branch + PR per task; there is no separate config repo in this setup —
-this is the project's only home.
+Governs project repos. New repos: a single protected `development` branch, set as default, no
+required status checks, no test/lint workflows. This repo (**kasper-orchestrator**) carries the
+workflow config itself and follows the same rules.
 
-Related: [[autonomous-workflow]] (checkpoints close each subtask loop; the gate convention;
-charters and the loop push exception), [[documentation]] (task doc tracks branch/commits/PR),
-[[boundaries]] (the push standing exception; secrets never leave the machine).
+Related: [[autonomous-workflow]], [[documentation]], [[boundaries]].

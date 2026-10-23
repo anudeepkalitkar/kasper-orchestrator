@@ -5,25 +5,38 @@ Wired as the second ``Stop`` handler (``run_hook.py overnight``). It reads the h
 (``cwd``, ``session_id``, ``transcript_path``) from stdin and
 ``tasks/BACKLOG.md``'s header, keeps a continuation
 counter and an ending marker in this session's scratch dir
-(``claude-temp/sessions/<id>/overnight.count`` and ``overnight.ended``), and decides by the
-order below (kasper-v2 §2). Only a stat of this session's own ending marker precedes the
-ownership check (its sole outcome is a silent pass); the backlog's ownership is settled before the
-counter is read, so a daytime or unrelated session is never blocked, instructed, or touched:
+(``claude-temp/sessions/<id>/overnight.count`` and ``overnight.ended``; when that marker is
+refused, ``claude-temp/overnight-<id>.ended`` instead), and decides by the order below
+(kasper-v2 §2). Only a stat of this session's own ending markers precedes the ownership check
+(its sole outcome is a silent pass); the backlog's ownership is settled before the counter is
+read, so a daytime or unrelated session is never blocked, instructed, or touched.
 
-1. **Not ours** — ``session_id`` is invalid, the ending marker exists (checked before ownership),
-   or the backlog is absent, unreadable, not ``overnight: on``, or names another session:
-   nothing. This is the whole behaviour by day, and no counter is read.
+Every on-disk lookup that gates a block — both markers, the counter, the transcript, the
+backlog header — reads "absent" only from ``FileNotFoundError``; any other ``OSError`` makes
+the answer unknown, and unknown never re-arms a block. An unknown marker passes silently (a
+block may already have gone out); an unknown counter ends the night through the marker rules,
+and an unknown transcript count leaves the marker rules to decide — both stay bounded because
+a block needs a persisted marker. (``Path.exists``/``is_file`` are not used for this: they
+report a failed stat as absent.)
+
+1. **Not ours** — ``session_id`` is invalid, either ending marker exists or cannot be checked
+   (both checked before ownership), or the backlog is absent, unreadable, not
+   ``overnight: on``, or names another session: nothing. This is the whole behaviour by day,
+   and no counter is read.
 2. **Terminal** — the counter already holds :data:`MAX_CONTINUATIONS` or more (the marker was
    lost): this is an ending condition too, handled as in 3.
 3. **Ending** — no open ``- [ ]`` item, ``until`` passed, or this continuation reaches
    :data:`MAX_CONTINUATIONS`: write the marker and block with the "end the night" instruction,
    so the cap's last continuation is the one that writes the morning report. If the marker
-   cannot be written but the backlog file and its directory are writable, the block is still
-   sent and the procedure's ``overnight: off`` silences the hook. Two silent exits: the
-   transcript already holds :data:`MAX_ENDING_BLOCKS` ending blocks (a write-free ceiling, so a
-   full or read-only disk cannot make the ending block repeat), or the transcript cannot be read
-   and neither the marker nor the backlog is writable (the night can be neither ended nor
-   reported).
+   write is refused by permissions (``PermissionError``) while the backlog file and its
+   directory permit writes, the fallback marker is written instead and, only once that write
+   has landed, the block is sent. A block is therefore only ever sent after a marker
+   persisted, and the next Stop finds it: the number of ending blocks is bounded without any
+   write having to succeed. Silent exits: the transcript already holds
+   :data:`MAX_ENDING_BLOCKS` ending blocks (a write-free ceiling, which holds only while the
+   transcript itself persists); the marker write fails with any other ``OSError`` (a full
+   disk, quota, read-only or I/O error — the report and ``overnight: off`` would fail too);
+   the marker is refused and the backlog is not writable; or the fallback marker fails too.
 4. **Continue** — block with the next-item instruction.
 
 Every reason starts with a tool call, so the harness's own cap on consecutive blocks without
@@ -31,8 +44,8 @@ a tool call also ends a night that does no work.
 
 State lives under the stable project root (``project_dirs.project_root``) — never the payload's
 ``cwd``, which follows the session into a package or worktree and would lose the backlog. Once
-the session owns the night, any I/O error on the counter or marker ends the night with the
-morning-report instruction, except the silent fallbacks above; nothing propagates out of the hook.
+the session owns the night, any I/O error on the counter ends the night with the
+morning-report instruction, except the silent exits above; nothing propagates out of the hook.
 """
 
 from __future__ import annotations
@@ -61,14 +74,19 @@ MAX_CONTINUATIONS: int = 60
 #: Ending blocks one session may be sent, counted in its transcript (needs no write to hold).
 MAX_ENDING_BLOCKS: int = 2
 
-#: Opens every ending reason, so occurrences in the transcript count ending blocks exactly.
+#: Opens every ending reason. Its occurrences in the transcript are an upper bound on the ending
+#: blocks sent, not an exact count: a session that reads this source inflates them, which errs
+#: toward silence, never toward repetition.
 ENDING_SENTINEL: str = "[overnight-ending]"
 
-#: Bytes read from the end of the transcript when counting ending blocks.
-_TRANSCRIPT_TAIL_BYTES: int = 8 * 1024 * 1024
+#: Bytes read per chunk while scanning the whole transcript for the sentinel.
+_TRANSCRIPT_CHUNK_BYTES: int = 1024 * 1024
 
 COUNT_NAME: str = "overnight.count"
 ENDED_NAME: str = "overnight.ended"
+#: The fallback ending marker, directly under ``claude-temp/`` — still the hook's own scratch
+#: area (a hook never writes ``tasks/``), but outside the session dir that refused the marker.
+FALLBACK_ENDED_NAME: str = "overnight-{session_id}.ended"
 
 _OPEN_ITEM: str = "- [ ] "
 
@@ -138,14 +156,17 @@ def until_passed(until: str | None, now: datetime.datetime) -> bool:
 def _read_count(path: Path) -> int | None:
     """The continuations taken so far: 0 when absent, None when the counter is corrupt.
 
+    Only ``FileNotFoundError`` means absent: a failed lookup must never reset the count (it
+    propagates, and the caller ends the night through the marker rules).
+
     Raises:
-        OSError: When the counter exists but cannot be read.
+        OSError: When the counter cannot be read for any reason but being absent.
     """
-    if not path.is_file():
-        return 0
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except ValueError:
+    except FileNotFoundError:
+        return 0
+    except ValueError:  # non-numeric or undecodable (UnicodeDecodeError is a ValueError)
         print(f"overnight: unreadable counter {path}; ending the night.", file=sys.stderr)
         return None
 
@@ -156,31 +177,58 @@ def _block(reason: str) -> str:
 
 
 def _backlog_writable(backlog_path: Path) -> bool:
-    """Whether the backlog file and its directory can be written (to end and report the night)."""
+    """Whether the backlog file and its directory permit writes (to end and report the night).
+
+    A permission prediction only, never proof the disk takes writes: it guards the fallback
+    marker attempt, whose own success is what licenses the block.
+    """
     return os.access(backlog_path, os.W_OK) and os.access(backlog_path.parent, os.W_OK)
 
 
+def _fallback_ended(ended: Path) -> Path:
+    """The fallback for a session's ending marker, directly under ``claude-temp/``.
+
+    Args:
+        ended: The session's marker, ``claude-temp/sessions/<id>/overnight.ended``.
+
+    Returns:
+        ``claude-temp/overnight-<id>.ended``.
+    """
+    session_dir = ended.parent
+    return session_dir.parent.parent / FALLBACK_ENDED_NAME.format(session_id=session_dir.name)
+
+
 def _ending_blocks_sent(transcript: Path | None) -> int | None:
-    """Count the ending blocks already sent, from the tail of the session transcript (read-only).
+    """Count the ending blocks already sent, scanning the whole session transcript (read-only).
+
+    The transcript is streamed in :data:`_TRANSCRIPT_CHUNK_BYTES` chunks, carrying the last
+    ``len(ENDING_SENTINEL) - 1`` bytes across each boundary so a sentinel split between chunks
+    still counts once; the scan stops as soon as :data:`MAX_ENDING_BLOCKS` is reached.
 
     Args:
         transcript: The payload's ``transcript_path``, or None when absent.
 
     Returns:
-        The number of :data:`ENDING_SENTINEL` occurrences, or None when the transcript cannot be
-        read.
+        The number of :data:`ENDING_SENTINEL` occurrences seen before the scan stopped (at
+        least :data:`MAX_ENDING_BLOCKS` once that is reached), or None when there is no
+        transcript or it cannot be read (the count is unknown; the marker rules decide).
     """
     if transcript is None:
         return None
+    sentinel = ENDING_SENTINEL.encode("utf-8")
+    keep = len(sentinel) - 1  # too short to hold a whole sentinel, so never counted twice
+    count = 0
+    carry = b""
     try:
         with transcript.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            handle.seek(max(0, handle.tell() - _TRANSCRIPT_TAIL_BYTES))
-            tail = handle.read()
+            while count < MAX_ENDING_BLOCKS and (chunk := handle.read(_TRANSCRIPT_CHUNK_BYTES)):
+                window = carry + chunk
+                count += window.count(sentinel)
+                carry = window[-keep:]
     except OSError as exc:
         print(f"overnight: cannot read transcript ({exc}).", file=sys.stderr)
         return None
-    return tail.decode("utf-8", errors="replace").count(ENDING_SENTINEL)
+    return count
 
 
 def _end_night(
@@ -194,20 +242,26 @@ def _end_night(
 
     First the write-free ceiling: when the transcript already holds
     :data:`MAX_ENDING_BLOCKS` ending blocks the hook passes silently, however the marker fares.
+    An absent or unreadable transcript leaves the count unknown, and the marker rules decide
+    exactly as for a count of 0: the block still needs a persisted marker.
 
-    When the marker cannot be written the block is still returned if the backlog is writable:
-    the end-the-night procedure sets ``overnight: off`` there, which ends ownership. If the
-    marker fails and the backlog is not writable, the night can be neither ended nor reported,
-    so the hook passes silently.
+    The block is returned only after a marker write has landed, so the next Stop finds that
+    marker and passes silently: however every write fails, at most one block per persisted
+    marker is ever sent. Any non-permission ``OSError`` on the marker (a full disk, quota,
+    read-only or I/O error) passes silently — the report and the header write would fail too.
+    When the marker is refused by permissions (``PermissionError``) and the backlog permits
+    writes (``overnight: off`` there ends ownership), the fallback marker is written instead
+    and its success, not the ``os.access`` prediction, licenses the block; a refused marker
+    with an unwritable backlog, or a fallback that fails with any ``OSError``, passes silently.
 
     Args:
-        ended: The session's ending marker.
+        ended: The session's ending marker (its fallback is derived by :func:`_fallback_ended`).
         backlog_path: The backlog file, where ``overnight: off`` is set (the report goes to
             ``tasks/morning-<date>.md``).
         why: The reason the night ends, quoted in the instruction.
         now: The current local time.
         transcript: The session transcript, for the ceiling; None or unreadable falls back to
-            the writability rule.
+            the marker rules.
 
     Returns:
         The block decision, or None when the ceiling is reached or the night cannot be ended.
@@ -219,11 +273,22 @@ def _end_night(
     try:
         ended.parent.mkdir(parents=True, exist_ok=True)
         ended.write_text(now.isoformat(), encoding="utf-8")
-    except OSError as exc:
+    except PermissionError as exc:
         print(f"overnight: cannot write {ended} ({exc}).", file=sys.stderr)
         if not _backlog_writable(backlog_path):
             print("overnight: backlog not writable either; passing silently.", file=sys.stderr)
             return None
+        try:
+            _fallback_ended(ended).write_text(now.isoformat(), encoding="utf-8")
+        except OSError as fallback_exc:
+            print(
+                f"overnight: cannot write fallback marker ({fallback_exc}); passing silently.",
+                file=sys.stderr,
+            )
+            return None
+    except OSError as exc:
+        print(f"overnight: cannot write marker ({exc}); passing silently.", file=sys.stderr)
+        return None
     return _block(
         f"{ENDING_SENTINEL} Overnight ended ({why}). Read tasks/BACKLOG.md, then end the night: "
         "append "
@@ -273,7 +338,7 @@ def _walk(
         The JSON block decision to print, or None when the night cannot be ended.
 
     Raises:
-        OSError: When the counter cannot be read or written.
+        OSError: When the counter cannot be read (other than being absent) or written.
     """
     count_path = scratch / COUNT_NAME
     taken = _read_count(count_path)
@@ -298,8 +363,10 @@ def decide(payload: dict[str, object], now: datetime.datetime) -> str | None:
     """Apply the four rules to one Stop event, writing the counter and marker as they require.
 
     Ownership comes first: only a session the backlog names reads its counter or gets an
-    instruction. After that, any I/O error ends the night with the morning-report instruction
-    instead of propagating (or passes silently when the night cannot be ended at all).
+    instruction. A marker that cannot be checked passes silently (a block may already have
+    gone out); after ownership, any I/O error — an unreadable counter included — ends the night
+    with the morning-report instruction instead of propagating (or passes silently when the
+    night cannot be ended at all).
 
     Args:
         payload: The hook payload (``cwd``, ``session_id``, ``transcript_path``,
@@ -315,13 +382,18 @@ def decide(payload: dict[str, object], now: datetime.datetime) -> str | None:
     root = project_root(payload.get("cwd"))
     scratch = root / SCRATCH_DIR / SESSIONS_DIR / session_id
     ended = scratch / ENDED_NAME
-    try:
-        # minimal: a stat of this session's own scratch, whose only outcome is a silent pass —
-        # so it may precede the ownership check without ever touching another session.
-        if ended.exists():
+    for marker in (ended, _fallback_ended(ended)):
+        # minimal: a stat of this session's own markers, whose only outcome is a silent pass —
+        # so it may precede the ownership check without touching another session. Not
+        # ``exists()``: it reports a failed stat as absent, which would re-arm the ending block.
+        try:
+            marker.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            print(f"overnight: cannot check {marker} ({exc}); passing silently.", file=sys.stderr)
             return None
-    except OSError as exc:
-        print(f"overnight: cannot check {ended} ({exc}).", file=sys.stderr)
+        return None  # the marker exists: the night already ended
     backlog = _owned_backlog(root, session_id)
     if backlog is None:
         return None

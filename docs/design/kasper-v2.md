@@ -188,21 +188,24 @@ parked and tasks/morning-<date>.md is written`") when the hook is not installed.
 wired as the second `Stop` handler in `settings.json`. It reads the payload from stdin (`cwd`,
 `session_id`, `stop_hook_active`) exactly as `project_dirs.py main()` does, keeps a counter at
 `claude-temp/sessions/<session_id>/overnight.count` and an `overnight.ended` marker beside it
-(the session scratch dir — the one place a hook writes), and decides in this fixed order; the
+(the session scratch dir — the one place a hook writes, save the fallback marker
+`claude-temp/overnight-<session_id>.ended` when that dir refuses `overnight.ended`), and decides in this fixed order; the
 first rule that applies wins:
 
-1. **Already ended:** `overnight.ended` exists (the night already ended) → print nothing, exit 0. Checked first.
+1. **Already ended:** `overnight.ended` or its fallback exists (the night already ended), or cannot be checked (a stat that fails with anything but file-not-found — `Path.exists()` is not used, since it reports a failed stat as absent) → print nothing, exit 0. Checked first.
 2. **Not ours:** `session_id` is invalid, or the backlog is absent, unreadable, header not `overnight: on`, or `session:` is not this session's id (`_session_id` and `project_root` come from `project_dirs.py`) → print nothing, exit 0. This is the whole behaviour by day, and in every session but the one that typed `/overnight on` — a next-morning session never resumes the night's walk by accident. An unreadable header means ownership is unknown: a silent pass.
-3. **Ending:** after ownership, any of: no `- [ ]` line left, `until` passed, the counter already at or over `MAX_CONTINUATIONS = 60`, or the backlog state unreadable → write `overnight.ended`. If the marker was written, or the backlog file is still writable, print `{"decision": "block", "reason": "Overnight ended (<why: backlog empty | until passed | cap reached | state unreadable>). Read tasks/BACKLOG.md, then end the night: append tasks/morning-<date>.md and set `overnight: off`; then stop."}` and exit 0; the end-the-night procedure sets `overnight: off`, which silences the hook. Two silent exits, each with a stderr note: the session transcript (the payload's `transcript_path`, read-only, tail-capped) already holds two ending blocks — counted by the fixed `[overnight-ending]` prefix every ending reason carries, so the ceiling needs no write to hold — or the transcript is unreadable and neither the marker nor the backlog can be written (a read-only project cannot take a morning report). The cap is an ending condition like the others — there is no silent final stop.
-4. **Continue:** counter +1 (incremented, then tested against the cap), print `{"decision": "block", "reason": "Overnight: <n> open backlog item(s). Read tasks/BACKLOG.md, take the first open one, run it as a task; park it if you cannot finish; then stop."}`, exit 0.
+3. **Ending:** after ownership, the counter is read and incremented first (an absent counter is 0; a corrupt one counts as `MAX_CONTINUATIONS`) and written back, then tested in this order: no `- [ ]` line left ("backlog empty"), `until` passed or unreadable ("until passed"), the incremented counter at or over `MAX_CONTINUATIONS = 60` ("cap reached" — the ending fires when the previous count was 59, so the cap's last continuation is the one that writes the morning report). Any `OSError` on the counter ends the night too ("state unreadable") — only file-not-found reads as an absent counter, so a failed read never resets the count; the ending block still needs a persisted marker. Each ending first checks the write-free ceiling: the session transcript (the payload's `transcript_path`, read-only) is scanned from the start in 1 MiB chunks, with a short overlap so a sentinel split across a chunk boundary counts once, stopping as soon as two ending blocks are seen; blocks are counted by the fixed `[overnight-ending]` prefix every ending reason carries, so the ceiling needs no write to hold. The count is an upper bound, not exact (a session that reads the hook's source inflates it), which errs toward silence, never toward repetition. If the ceiling is reached, the hook prints nothing. Otherwise it writes `overnight.ended` and prints `{"decision": "block", "reason": "[overnight-ending] Overnight ended (<why: backlog empty | until passed | cap reached | state unreadable>). Read tasks/BACKLOG.md, then end the night: append tasks/morning-<date>.md and set `overnight: off`; then stop."}` and exits 0; the end-the-night procedure sets `overnight: off`, which silences the hook. If the marker write fails with `PermissionError` and `os.access` says the backlog file and its directory permit writes, the hook writes the fallback marker `claude-temp/overnight-<session_id>.ended` and prints the block only once that write has landed (the next Stop finds it and passes silently; `overnight: off` will still land); with an unwritable backlog, or a fallback write that fails with any `OSError`, the hook passes silently. A block is therefore only ever printed after a marker persisted, so the ending blocks stay bounded even when no write succeeds and the transcript does not persist. Any other `OSError` on the marker (full disk, quota, read-only or I/O error) passes silently with a stderr note `overnight: cannot write marker (<exc>); passing silently.`, since the report and `overnight: off` would fail too and a block nothing can silence is never repeated. A missing or unreadable transcript makes the count unknown and does not by itself silence the hook; the marker rules above decide, exactly as for a count of 0. The cap is an ending condition like the others — there is no silent final stop except these four silent exits after ownership (ceiling, non-permission marker failure, unwritable backlog, failed fallback marker), besides rule 1's marker that cannot be checked.
+4. **Continue:** (the counter was already incremented in rule 3), print `{"decision": "block", "reason": "Overnight: <n> open backlog item(s). Read tasks/BACKLOG.md, take the first open one, run it as a task; park it if you cannot finish; then stop."}`, exit 0.
 
 Every reason starts with a tool call ("Read tasks/BACKLOG.md"), so the harness's built-in cap
 — eight consecutive blocks with no tool call between them, `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` —
 is reset on every continuation that does any work, and ends the night harmlessly for one that
 does none; the design relies on it rather than fighting it. `stop_hook_active` is not consulted.
 
-**Ending the night is one procedure, and every path runs it** (classes 1 and
-terminal-report): "end the night" = one KASPER bookkeeping Bash call that **first appends**
+**Ending the night is one procedure, run by every path but four silent hook exits** (the
+transcript ceiling, a non-permission marker-write failure, a refused marker with an unwritable
+backlog, and a failed fallback marker — rule 3: each stops without a report, by design, because the night cannot be ended or
+reported) (classes 1 and terminal-report): "end the night" = one KASPER bookkeeping Bash call that **first appends**
 `tasks/morning-<date>.md` from the backlog's current state (even when no item was touched —
 the report then says so and why), **then** writes `overnight: off`. `off` is never written
 without the report before it. The paths, each ending here:
@@ -396,7 +399,8 @@ by reference and the language-named developers.
 ## Boundaries
 
 - **Writes:** project root only, as today. New writers: `overnight.py` writes a counter and a
-  marker under `claude-temp/sessions/<id>/`; `new_task.py --branch` creates a local branch;
+  marker under `claude-temp/sessions/<id>/` (a refused marker falls back to
+  `claude-temp/overnight-<id>.ended`); `new_task.py --branch` creates a local branch;
   KASPER writes `tasks/morning-<date>.md` and the backlog header; worktrees and patches live
   under `claude-temp/`. Nothing writes `~/.claude/` (install.py as before); no settings key
   beyond the approved Stop handler.

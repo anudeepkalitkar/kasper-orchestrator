@@ -42,7 +42,7 @@ treat it as one. **Loop charters declare their network writes (host + operation)
 one escalates. **Secrets never leave the machine** except to the service they belong to.
 
 ## Permission ledger — prompt once per genuinely new thing
-`.claude/permissions-ledger.json` is the single source of truth for what Bash may auto-run.
+`.claude/permissions-ledger.json` is the single source of truth for what Bash may auto-run. In auto mode only settings rules are documented to resolve before the classifier, and a hook's allow is not, so `settings.json` carries the routine git/gh allow rules (listed there); the ledger governs every other Bash command, and deny rules still win.
 - **Gate** (`bash_permission_gate.py`, PreToolUse): decomposes any command and auto-allows when
   every part is covered. Guards force a prompt and beat every allow and grant: `ask_words` (a tool
   plus guarded words — `git` + `merge`) and `ask_patterns` (regex). Unknowns fall through to a

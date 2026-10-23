@@ -144,6 +144,8 @@ Every hook command runs through one dispatcher —
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
   shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
   never those.
+  They also carry a narrow allow list for routine git/gh operations: in auto mode only settings
+  rules resolve before the classifier, a hook's allow is not documented to, and deny rules still win.
 
 ## Where things are
 

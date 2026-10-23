@@ -14,7 +14,7 @@ from unittest.mock import Mock
 import pytest
 
 import install
-from tests.helpers.settings import hook_commands
+from tests.helpers.settings import ORIGINAL_ALLOW_RULES, ROUTINE_ALLOW_RULES, hook_commands
 
 #: A hook command carrying :data:`install.HOOK_MARKER` — KASPER's, so the strip takes it.
 _KASPER_COMMAND = 'python3 "$HOME/.claude/scripts/run_hook.py" notify'
@@ -212,6 +212,27 @@ def test_strip_kasper_hooks_does_not_mutate_its_input(
 
 
 # ---------------------------------------------------------------- merge_settings
+
+
+@pytest.mark.parametrize("existing_allow", [[], ["Bash(ls*)", "Read", "Bash(git status *)"]])
+def test_merge_settings_keeps_routine_rules_and_home_allow_union(
+    existing_allow: list[str],
+    home_settings: dict[str, Any],
+    kasper_settings: dict[str, Any],
+) -> None:
+    """Task 022: fresh and overlapping home permissions retain every routine rule."""
+    home_settings["permissions"]["allow"] = existing_allow
+    required = [*ORIGINAL_ALLOW_RULES, *ROUTINE_ALLOW_RULES]
+    kasper_settings["permissions"]["allow"] = required
+    before = copy.deepcopy((home_settings, kasper_settings))
+
+    merged = install.merge_settings(home_settings, kasper_settings, "python3")
+
+    assert set(merged["permissions"]["allow"]) == set(existing_allow) | set(required)
+    assert len(merged["permissions"]["allow"]) == len(set(existing_allow) | set(required))
+    assert merged["permissions"]["allow"][: len(existing_allow)] == existing_allow
+    assert install.merge_settings(merged, kasper_settings, "python3") == merged
+    assert (home_settings, kasper_settings) == before
 
 
 def test_merge_settings_preserves_unrelated_top_level_keys(

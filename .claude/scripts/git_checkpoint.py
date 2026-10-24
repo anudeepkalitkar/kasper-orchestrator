@@ -2,8 +2,9 @@
 """Commit and push the current subtask as a git checkpoint.
 
 Implements the Git Checkpoint Workflow + Branch Strategy rules:
-- Refuses to commit/push directly to a shared branch (``development``/``main``/
-  ``master``) — real work happens on a feature branch and reaches those via gated PRs.
+- Refuses to commit/push directly to a shared branch (``development``/``main``/``master``,
+  legacy ``qa``, and the repo's resolved mainline whatever its name) — real work happens on a
+  feature branch and reaches those via gated PRs.
 - Refuses on a detached HEAD (no branch to push).
 - Stages tracked changes plus untracked files, but refuses — naming them — when any of
   those paths is local-only state (``tasks/``, ``claude-temp/``, ``claude-memory/``, and
@@ -13,6 +14,9 @@ Implements the Git Checkpoint Workflow + Branch Strategy rules:
 - With ``--only <path>...`` it commits exactly those paths and nothing else, by refusal: a
   path already staged that is not in the list, a forbidden path in the list, or a staged set
   that ends up empty or wider than the list stops the checkpoint before anything is committed.
+  Every operand must exist in the worktree or be tracked by git: ``--only`` takes one or more
+  paths, so a trailing commit message would be read as a path — that is refused before any
+  staging, and the message goes via ``--message-file`` or stdin instead.
 
 The message comes from the first argument, or from stdin when no argument is given — the
 ``/checkpoint`` command passes it through a file so no shell ever parses it.
@@ -37,6 +41,7 @@ from pathlib import Path
 # One rule for "is docs/adr/ local-only here", shared with the SessionStart hook so the two can
 # never disagree (kasper-v2 class 5). Same import precedent as permission_recorder.py.
 sys.path.insert(0, str(Path(__file__).parent))
+from new_task import mainline  # noqa: E402
 from project_dirs import adr_local_only  # noqa: E402
 
 # Shared branches (git-workflow): never checkpoint directly here — development is reached only
@@ -69,6 +74,18 @@ def is_forbidden(path: str, adr_local: bool = True) -> bool:
     is_env = name == ENV_FILE or (name.startswith(f"{ENV_FILE}.") and name not in ENV_TEMPLATES)
     is_adr = adr_local and path.startswith(ADR_DIR)
     return path.startswith(FORBIDDEN_DIRS) or is_adr or is_env
+
+
+def resolved_mainline() -> str | None:
+    """The repo's mainline as ``new_task`` resolves it, or None when it cannot be resolved.
+
+    A git failure here must never crash or loosen the guard: :data:`PROTECTED_BRANCHES` is
+    checked regardless, so None only means "no extra name to refuse".
+    """
+    try:
+        return mainline()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def _listing(paths: list[str]) -> str:
@@ -114,9 +131,36 @@ class GitCheckpoint:
         return adr_local_only(root) is not False
 
     def _paths(self, args: list[str]) -> list[str]:
-        """Run a NUL-separated git path listing and return the paths it names."""
-        listing = self._run([*args, "-z"], capture=True, strip=False)
+        """Run a NUL-separated git path listing and return the paths it names.
+
+        ``-z`` goes straight after the subcommand, so it stays an option even when ``args``
+        carries a ``--`` pathspec separator (after which git reads everything as a path).
+        """
+        subcommand, *rest = args
+        listing = self._run([subcommand, "-z", *rest], capture=True, strip=False)
         return [path for path in listing.split("\0") if path]
+
+    def unknown_paths(self, only: list[str]) -> list[str]:
+        """The ``--only`` operands that neither exist in the worktree nor are tracked by git.
+
+        A tracked file deleted from the worktree still counts — committing its deletion is a
+        legitimate scoped checkpoint. Paths are cwd-relative, exactly as ``git add`` reads them.
+
+        Args:
+            only: The normalised ``--only`` operands.
+
+        Returns:
+            The unknown operands, in the order given.
+        """
+        absent = [path for path in only if not Path(path).exists()]
+        if not absent:
+            return []
+        tracked = self._paths(["ls-files", "--", *absent])
+        return [
+            path
+            for path in absent
+            if not any(t == path or t.startswith(f"{path}/") for t in tracked)
+        ]
 
     def staged_paths(self) -> list[str]:
         """The paths currently in the index that differ from HEAD.
@@ -201,7 +245,19 @@ class GitCheckpoint:
         return self.stage()
 
     def run(self, message: str) -> int:
-        """Execute the checkpoint. Returns a process exit code."""
+        """Execute the checkpoint: :meth:`refusal`, then :meth:`commit`. Returns an exit code."""
+        refused = self.refusal()
+        return refused if refused is not None else self.commit(message)
+
+    def refusal(self) -> int | None:
+        """Refuse a checkpoint that must not happen, whatever its message.
+
+        Checked before any message is required, so a message misplaced after ``--only`` gets
+        the named-operand diagnostic rather than the generic missing-message error.
+
+        Returns:
+            The exit code after printing the refusal, or None when the checkpoint may proceed.
+        """
         branch = self.current_branch()
         if not branch:
             print(
@@ -210,7 +266,7 @@ class GitCheckpoint:
                 file=sys.stderr,
             )
             return 1
-        if branch.lower() in PROTECTED_BRANCHES:
+        if branch.lower() in PROTECTED_BRANCHES or branch == resolved_mainline():
             print(
                 f"Refusing to checkpoint on protected branch '{branch}'. "
                 f"Create a feature branch first:\n"
@@ -219,6 +275,27 @@ class GitCheckpoint:
             )
             return 1
 
+        unknown = [] if self._only is None else self.unknown_paths(self._only)
+        if unknown:
+            print(
+                "Refusing to checkpoint: these --only operands are neither in the worktree nor "
+                "tracked by git; a commit message goes via --message-file or stdin, not after "
+                "--only:\n" + _listing(unknown),
+                file=sys.stderr,
+            )
+            return 1
+        return None
+
+    def commit(self, message: str) -> int:
+        """Stage, commit and (unless ``--no-push``) push; call only after :meth:`refusal`.
+
+        Args:
+            message: The commit message.
+
+        Returns:
+            A process exit code.
+        """
+        branch = self.current_branch()
         if self._only is None and not self.has_changes():
             print("No changes to commit — working tree is clean.")
             return 0
@@ -263,7 +340,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--only",
         nargs="+",
         metavar="PATH",
-        help="Commit exactly these repo-relative paths and nothing else (refuses otherwise).",
+        help=(
+            "Commit exactly these repo-relative paths and nothing else (refuses otherwise); "
+            "each must exist or be tracked, so pass the message via --message-file or stdin."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -292,16 +372,24 @@ def resolve_message(message: str | None, message_file: Path | None = None) -> st
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    operation = GitCheckpoint(push=args.push, only=args.only)
     try:
-        message = resolve_message(args.message, args.message_file)
-    except OSError as exc:
-        print(f"Cannot read the commit message file: {exc}", file=sys.stderr)
-        return 2
-    if message is None:
-        print("A commit message is required (argument, --message-file, or stdin).", file=sys.stderr)
-        return 2
-    try:
-        return GitCheckpoint(push=args.push, only=args.only).run(message)
+        # Refusals first: a message swallowed by --only must be named, not reported as missing.
+        refused = operation.refusal()
+        if refused is not None:
+            return refused
+        try:
+            message = resolve_message(args.message, args.message_file)
+        except OSError as exc:
+            print(f"Cannot read the commit message file: {exc}", file=sys.stderr)
+            return 2
+        if message is None:
+            print(
+                "A commit message is required (argument, --message-file, or stdin).",
+                file=sys.stderr,
+            )
+            return 2
+        return operation.commit(message)
     except subprocess.CalledProcessError as exc:
         print(f"git command failed (exit {exc.returncode}).", file=sys.stderr)
         return exc.returncode or 1

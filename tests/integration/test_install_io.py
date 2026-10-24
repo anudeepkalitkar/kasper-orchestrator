@@ -1165,3 +1165,56 @@ def test_status_cli_reports_source_drift_as_behind(
     assert install.main(["--status", "--home", str(home)]) == 1
     assert line_with(capsys.readouterr().out, "behind", "agents/stub.md") is not None
     assert (home / "agents/stub.md").read_bytes() == installed_bytes
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_status_checks_missing_plain_settings_but_accepts_user_values(
+    tmp_path: Path,
+    home: Path,
+    fixed_now: datetime,
+    kasper_settings: dict[str, Any],
+    missing: bool,
+) -> None:
+    """Status detects a newly seeded key without treating a user override as drift."""
+    source = make_source(tmp_path / "source", kasper_settings, {})
+    code, output = _run_install(source, home, now=fixed_now)
+    assert code == 0, output
+    kasper_settings["alwaysThinkingEnabled"] = True
+    (source / ".claude" / install.SETTINGS_NAME).write_text(
+        json.dumps(kasper_settings), encoding="utf-8"
+    )
+    settings_path = home / install.SETTINGS_NAME
+    if not missing:
+        settings = _settings(home)
+        settings["alwaysThinkingEnabled"] = False
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+    before = settings_path.read_bytes()
+    out = io.StringIO()
+    assert install.status(home, out=out) == (1 if missing else 0)
+    assert ("behind  alwaysThinkingEnabled in settings.json" in out.getvalue().splitlines()) == (
+        missing
+    )
+    assert "ok  hooks in settings.json" in out.getvalue().splitlines()
+    assert settings_path.read_bytes() == before
+
+
+def test_status_skips_plain_key_check_when_source_settings_are_unreadable(
+    tmp_path: Path,
+    home: Path,
+    fixed_now: datetime,
+    kasper_settings: dict[str, Any],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing source settings file cannot establish that a home is behind."""
+    kasper_settings["alwaysThinkingEnabled"] = True
+    source = make_source(tmp_path / "source", kasper_settings, {})
+    code, output = _run_install(source, home, now=fixed_now)
+    assert code == 0, output
+    settings = _settings(home)
+    del settings["alwaysThinkingEnabled"]
+    (home / install.SETTINGS_NAME).write_text(json.dumps(settings), encoding="utf-8")
+    (source / ".claude" / install.SETTINGS_NAME).unlink()
+    out = io.StringIO()
+    assert install.status(home, out=out) == 0
+    assert "behind" not in out.getvalue()
+    assert "source settings unreadable" in capsys.readouterr().err

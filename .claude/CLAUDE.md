@@ -117,8 +117,9 @@ branches) · [/until-green](commands/until-green.md) (loop tests until green) ·
 
 Every hook command runs through one dispatcher —
 `python3 "<home>/.claude/scripts/run_hook.py" <name>`
-([run_hook.py](scripts/run_hook.py)), which prefers the project's own
-`.claude/scripts/<name>.py` and falls back to the home copy, then `runpy`s it in-process.
+([run_hook.py](scripts/run_hook.py)), which `runpy`s the home copy in-process;
+the project's own `.claude/scripts/<name>.py` runs instead only in the source repo recorded in
+`~/.claude/kasper-manifest.json`.
 
 - SessionStart → [project_dirs.py](scripts/project_dirs.py) (creates
   `claude-memory/` + `claude-temp/` in the project root, excludes those two plus `/tasks/`

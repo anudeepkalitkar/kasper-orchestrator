@@ -18,8 +18,10 @@ prompts in `.claude/codex/` (with one per-stack section in `.claude/codex/stacks
 seat's prompt by `--stack`), the standing
 rules in `.claude/rules/`, the commands in `.claude/commands/`, the permission ledger, and
 the hook scripts in `.claude/scripts/` (all dispatched through `run_hook.py`). That, the
-installer (`install.py`) with its `tests/` and `pyproject.toml`, `docs/licenses/`, this README
-and `CLAUDE.md` are what this repo holds today. Parts of the prompts — the framework method inside
+installer (`install.py`) with its `tests/` and `pyproject.toml`, the system overview in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the per-feature specs in
+[`docs/design/`](docs/design/), `docs/licenses/`, this README and `CLAUDE.md` are what this repo
+holds today. Parts of the prompts — the framework method inside
 `python-developer` and `typescript-developer`, and the Python and TypeScript stack sections in
 `.claude/codex/stacks/` — are adapted from
 [affaan-m/ECC](https://github.com/affaan-m/ECC) under the MIT licence, kept at

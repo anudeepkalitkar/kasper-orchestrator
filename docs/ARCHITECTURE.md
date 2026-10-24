@@ -8,7 +8,7 @@
 
 ## What KASPER is
 
-KASPER is a Claude Code configuration — two skills, nine agent definitions, eight rules, six
+KASPER is a Claude Code configuration — two skills, nine agent definitions, eight rules, seven
 commands, a permission ledger and twelve stdlib-only Python scripts — that turns one Claude Code
 session into a project's orchestrator. That session delegates work to **subagents** (the Agent
 tool) and verification to **seats** on a second vendor's CLI (OpenAI Codex), so the writer never
@@ -125,15 +125,15 @@ wired to it today — a policy in `docs/design/debate-seats.md`, not a guard in 
 
 `.claude/skills/kasper/SKILL.md` is **/kasper**, the runtime below; `.claude/skills/webapp-testing/SKILL.md`
 is Anthropic's vendored Playwright tooling — installed, not KASPER's code (excluded from `ruff`).
-Of the six commands in `.claude/commands/`, two have a script:
+Of the seven commands in `.claude/commands/`, two have a script:
 **/new-task** → `.claude/scripts/new_task.py --branch` scaffolds `tasks/<NNN>-<slug>.md` and
 creates `feat/<NNN>-<slug>`, refusing unless the mainline is checked out, clean and not behind;
 **/checkpoint** → `.claude/scripts/git_checkpoint.py` commits and pushes the current subtask,
-refusing the four names `master`, `main`, `development`, `qa` plus the mainline `new_task.py`
-resolves under any other name (the four alone when it cannot be resolved), a detached HEAD, and any local-only path (`tasks/`, `claude-temp/`,
+refusing the four names `master`, `main`, `development`, `qa` plus the mainline branch resolved by `.claude/scripts/new_task.py`
+under any other name (the four alone when it cannot be resolved), a detached HEAD, and any local-only path (`tasks/`, `claude-temp/`,
 `claude-memory/`, `docs/adr/` when the exclude file lists it, env files); `--only` narrows a
 parallel node to its declared files, refusing any operand that neither exists nor is tracked
-(so a stray trailing message is caught before staging). **/adr**, **/overnight**, **/permit** and **/until-green**
+(so a stray trailing message is caught before staging). **/adr**, **/overnight**, **/permit**, **/quiet** and **/until-green**
 are prompt-only (**/permit** drives the gate by hand).
 
 ## The session lifecycle
@@ -168,7 +168,7 @@ calls the project's own code makes. The ledger governs what Bash auto-runs; a gu
 |---|---|---|
 | `docs/`, `README.md`, `CLAUDE.md`, `.claude/`, `install.py`, `tests/`, `docs/licenses/` | the system, its docs and tests | yes |
 | `docs/adr/` | decision records | private repo: yes · public repo (this one): local-only |
-| `tasks/` | one living doc per task; `tasks/BACKLOG.md` is the overnight switch | never |
+| `tasks/` | one living doc per task; `tasks/BACKLOG.md` is the overnight switch; `tasks/STATUS.md` is the status page, its `quiet:` first line the quiet-mode switch | never |
 | `claude-memory/` | session memory (`claude-memory/MEMORY.md` index + one file per fact); the harness memory dir links here | never |
 | `claude-temp/sessions/<id>/` | scratch: briefs, seat reports, debate output; overnight's `overnight.count` and `overnight.ended` marker (fallback `claude-temp/overnight-<id>.ended`) | never |
 | `~/.claude/` | the installed copy, manifest, backups; the home ledger's grants and unknowns log; memory links | n/a |

@@ -214,6 +214,83 @@ def test_strip_kasper_hooks_does_not_mutate_its_input(
 # ---------------------------------------------------------------- merge_settings
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("autoContinueAtUsageLimit", True), ("theme", "dark"), ("custom", {"items": [1]})],
+)
+def test_merge_settings_seeds_repo_only_keys_into_empty_home(key: str, value: object) -> None:
+    """Every plain repo setting is seeded, not only the currently shipped boolean."""
+    assert install.merge_settings({}, {key: value}, "python3") == {key: value}
+
+
+def test_merge_settings_seeds_missing_key_and_preserves_user_keys(
+    home_settings: dict[str, Any],  # JSON settings contain heterogeneous nested values.
+    kasper_settings: dict[str, Any],  # JSON settings contain heterogeneous nested values.
+) -> None:
+    """Adding the default retains the user's unrelated configuration."""
+    kasper_settings["autoContinueAtUsageLimit"] = True
+    merged = install.merge_settings(home_settings, kasper_settings, "python3")
+    assert merged["autoContinueAtUsageLimit"] is True
+    for key in ("model", "theme", "statusLine"):
+        assert merged[key] == home_settings[key]
+
+
+@pytest.mark.parametrize("home_value", ["user", False, None, 0, "", [], {}])
+def test_merge_settings_home_value_wins_even_when_empty(home_value: object) -> None:
+    """Presence, rather than truthiness, decides whether a home value wins."""
+    merged = install.merge_settings(
+        {"autoContinueAtUsageLimit": home_value}, {"autoContinueAtUsageLimit": True}, "python3"
+    )
+    assert merged == {"autoContinueAtUsageLimit": home_value}
+    assert type(merged["autoContinueAtUsageLimit"]) is type(home_value)
+
+
+def test_merge_settings_plain_default_keeps_structural_merges(
+    home_settings: dict[str, Any],  # JSON settings contain heterogeneous nested values.
+    kasper_settings: dict[str, Any],  # JSON settings contain heterogeneous nested values.
+) -> None:
+    """Seeding a plain default still replaces stale hooks and unions permission lists."""
+    kasper_settings["autoContinueAtUsageLimit"] = True
+    merged = install.merge_settings(home_settings, kasper_settings, "python")
+    assert hook_commands(merged["hooks"]) == [
+        "prettier --write",
+        'python "$HOME/.claude/scripts/run_hook.py" bash_permission_gate',
+        "my-logger.sh",
+        'python "$HOME/.claude/scripts/run_hook.py" notify',
+    ]
+    assert merged["permissions"] == {
+        "allow": ["Bash(ls*)", "Read", "WebFetch"],
+        "deny": ["Bash(sudo *)", "Bash(rm -rf *)"],
+        "additionalDirectories": ["/work"],
+    }
+
+
+def test_merge_settings_does_not_seed_empty_structural_blocks() -> None:
+    """Absent hooks and permission lists must not become wholesale repo block copies."""
+    assert install.merge_settings(
+        {},
+        {"hooks": {}, "permissions": {"additionalDirectories": ["/repo"]}, "theme": "dark"},
+        "python3",
+    ) == {"theme": "dark"}
+
+
+def test_merge_settings_plain_defaults_do_not_mutate_either_input(
+    home_settings: dict[str, Any],  # JSON settings contain heterogeneous nested values.
+    kasper_settings: dict[str, Any],  # JSON settings contain heterogeneous nested values.
+) -> None:
+    """Merging and editing nested output leave both caller-owned documents untouched."""
+    kasper_settings["custom"] = {"items": ["repo"]}
+    kasper_settings["theme"] = "light"
+    before = copy.deepcopy((home_settings, kasper_settings))
+    merged = install.merge_settings(home_settings, kasper_settings, "python")
+    assert (home_settings, kasper_settings) == before
+    merged["custom"]["items"].append("output-only")
+    merged["statusLine"]["command"] = "changed"
+    merged["permissions"]["allow"].append("output-only")
+    merged["hooks"]["Stop"][0]["hooks"][0]["command"] = "changed"
+    assert (home_settings, kasper_settings) == before
+
+
 @pytest.mark.parametrize("existing_allow", [[], ["Bash(ls*)", "Read", "Bash(git status *)"]])
 def test_merge_settings_keeps_routine_rules_and_home_allow_union(
     existing_allow: list[str],

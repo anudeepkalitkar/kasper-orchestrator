@@ -1,4 +1,4 @@
-"""Task 022: inspect the shipped settings on disk, so these are integration tests."""
+"""Inspect the shipped settings on disk, so these are integration tests."""
 
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,13 @@ def source_permissions(repo_root: Path) -> dict[str, list[str]]:
         assert isinstance(permissions[name], list)
         assert all(isinstance(rule, str) for rule in permissions[name])
     return permissions
+
+
+def test_source_settings_enable_auto_continue_at_usage_limit(repo_root: Path) -> None:
+    """Task 023 requires the shipped settings to enable continuation at usage limits."""
+    settings = read_json(repo_root / ".claude" / "settings.json")
+    assert isinstance(settings, dict)
+    assert settings["autoContinueAtUsageLimit"] is True
 
 
 @pytest.mark.parametrize("rule", (*ORIGINAL_ALLOW_RULES, *ROUTINE_ALLOW_RULES))

@@ -146,6 +146,9 @@ Every hook command runs through one dispatcher —
   never those.
   They also carry a narrow allow list for routine git/gh operations: in auto mode only settings
   rules resolve before the classifier, a hook's allow is not documented to, and deny rules still win.
+  `install.py` merges the hooks and unions the allow/deny lists; every other top-level key here
+  (today `autoContinueAtUsageLimit: true` — a session waits out a usage limit, then continues) is
+  copied into the home settings only when they lack it, so the home value always wins.
 
 ## Where things are
 

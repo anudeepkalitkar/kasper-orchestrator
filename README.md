@@ -42,7 +42,10 @@ The installer copies KASPER's own files — `agents/`, `codex/`, `commands/`, `d
 `scripts/`, `skills/`, `sounds/`, `CLAUDE.md` — out of `.claude/` into your Claude home, `~/.claude/`,
 and **merges** `settings.json` and `permissions-ledger.json` into whatever is already
 there, so your own keys (the model pin, the theme, your own hooks) and your own allow keys,
-denials and machine-specific grants survive untouched. Anything it would overwrite is
+denials and machine-specific grants survive untouched. Any other top-level setting the repo's
+`settings.json` carries — today `autoContinueAtUsageLimit: true`, so a session waits out a usage
+limit and then continues — is copied in only when your home lacks that key; a value you already
+set, even `false`, always wins. Anything it would overwrite is
 copied first into `~/.claude/kasper-backup-<timestamp>/`, and everything it wrote is
 recorded in `~/.claude/kasper-manifest.json`.
 
@@ -53,7 +56,8 @@ recorded in `~/.claude/kasper-manifest.json`.
   nothing is installed.
 - `--uninstall` — delete the installed files that are still untouched, keep and report any
   you edited, and strip KASPER's hooks from `settings.json`; the permissions block and the
-  ledger stay behind, the ledger because your grants live in it.
+  ledger stay behind, the ledger because your grants live in it, and so does any plain setting
+  the install seeded (such as `autoContinueAtUsageLimit`).
 - `--home PATH` — act on a Claude home other than `~/.claude`.
 - `--python NAME` — the interpreter rendered into the hook commands (default: `python` on
   Windows, `python3` elsewhere).

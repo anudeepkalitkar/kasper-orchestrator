@@ -241,10 +241,25 @@ def merge_settings(
         merged["permissions"] = permissions
     # Any other repo key (a plain setting) is seeded only when home lacks it, so the user's own
     # value — even an explicit false — always wins.
-    for key, value in kasper.items():
-        if key not in _MERGED_KEYS and key not in merged:
-            merged[key] = copy.deepcopy(value)
+    for key in missing_settings_keys(existing, kasper):
+        merged[key] = copy.deepcopy(kasper[key])
     return merged
+
+
+def missing_settings_keys(existing: Mapping[str, Any], kasper: Mapping[str, Any]) -> list[str]:
+    """The plain repo settings keys the home lacks — the ones :func:`merge_settings` seeds.
+
+    Keys in :data:`_MERGED_KEYS` are merged, not seeded, so they never count; a key the home
+    holds with a different value is the user's choice and does not count either.
+
+    Args:
+        existing: The home settings, or ``{}`` when there are none.
+        kasper: The repository's settings.
+
+    Returns:
+        The missing keys, in the repository's order.
+    """
+    return [key for key in kasper if key not in _MERGED_KEYS and key not in existing]
 
 
 def merge_ledger(existing: Mapping[str, Any] | None, seed: Mapping[str, Any]) -> dict[str, Any]:
@@ -709,6 +724,32 @@ def _source_hashes(home: Path) -> dict[str, str] | None:
     return {rel: sha256_hex(content) for rel, content in files.items()}
 
 
+def _source_settings(home: Path) -> dict[str, Any] | None:
+    """Load the ``settings.json`` of the source checkout the manifest records.
+
+    Like :func:`_source_hashes`, a source that is gone cannot say what the home lacks; that
+    is reported on stderr and the check is skipped, never guessed.
+
+    Args:
+        home: The Claude home whose manifest names the source.
+
+    Returns:
+        The source's settings, or None when there is no readable source.
+
+    Raises:
+        ValueError: When the manifest or the source settings are corrupt or malformed.
+        OSError: When the manifest cannot be read.
+    """
+    source = _load_json(home / MANIFEST_NAME).get("source")
+    if not isinstance(source, str):
+        return None  # _source_hashes already announced the missing source.
+    try:
+        return _load_settings(Path(source) / ".claude" / SETTINGS_NAME)
+    except OSError as exc:
+        print(f"install.py: source settings unreadable ({exc}); keys not checked", file=sys.stderr)
+        return None
+
+
 def _prune_empty_dirs(root: Path) -> None:
     """Remove every empty directory under an owned root, the root included (§10).
 
@@ -912,7 +953,7 @@ def install(
 
 
 def status(home: Path, out: TextIO | None = None) -> int:
-    """Report the installed files and the hook wiring against the manifest (§9).
+    """Report the installed files, the hook wiring and the seeded settings keys (§9).
 
     Unlike an install, this mode repairs nothing, so an unreadable manifest is an error
     rather than a warning — reporting a home it cannot read as clean would be a lie.
@@ -923,9 +964,10 @@ def status(home: Path, out: TextIO | None = None) -> int:
             resolved now rather than at import so a redirected stream is honoured.
 
     Returns:
-        0 when every recorded file matches, none is ``behind`` the recorded source, and
-        ``settings.json`` still carries the hooks; 1 on any drift (``behind`` included), and
-        when there is no manifest at all.
+        0 when every recorded file matches, none is ``behind`` the recorded source,
+        ``settings.json`` still carries the hooks, and it holds every plain top-level key the
+        source settings seed; 1 on any drift (``behind`` included, a missing seeded key among
+        it), and when there is no manifest at all.
 
     Raises:
         ValueError: When the manifest or ``settings.json`` is corrupt, malformed, or the
@@ -940,9 +982,19 @@ def status(home: Path, out: TextIO | None = None) -> int:
     for rel in sorted(report):
         print(f"{report[rel]}  {rel}", file=stream)
     # Hooks gone from settings means KASPER is installed but not in force: drift, not clean.
-    installed_hooks = _has_kasper_hooks(home / SETTINGS_NAME)
+    settings_path = home / SETTINGS_NAME
+    installed_hooks = _has_kasper_hooks(settings_path)
     print(f"{'ok' if installed_hooks else 'missing'}  hooks in {SETTINGS_NAME}", file=stream)
-    return 0 if installed_hooks and all(kind == "ok" for kind in report.values()) else 1
+    # A key a later install would seed is one the home is behind on; a differing value is not.
+    source_settings = _source_settings(home)
+    home_settings = _load_settings(settings_path) if settings_path.is_file() else {}
+    missing_keys = (
+        [] if source_settings is None else missing_settings_keys(home_settings, source_settings)
+    )
+    for key in missing_keys:
+        print(f"behind  {key} in {SETTINGS_NAME}", file=stream)
+    clean = installed_hooks and not missing_keys
+    return 0 if clean and all(kind == "ok" for kind in report.values()) else 1
 
 
 def uninstall(home: Path, now: datetime | None = None, out: TextIO | None = None) -> int:

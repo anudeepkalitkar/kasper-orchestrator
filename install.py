@@ -85,6 +85,8 @@ _MANIFEST_SCHEMA: int = 1
 _BACKUP_PREFIX: str = "kasper-backup-"
 _BACKUP_STAMP: str = "%Y%m%dT%H%M%SZ"
 _PERMISSION_LISTS: tuple[str, str] = ("allow", "deny")
+#: Top-level settings keys merged structurally; every other repo key is seeded if absent (§4).
+_MERGED_KEYS: frozenset[str] = frozenset({"hooks", "permissions"})
 _LEDGER_PATTERN_LISTS: tuple[str, str] = ("allow_patterns", "ask_patterns")
 _PYCACHE: str = "__pycache__"
 _JSON_INDENT: int = 2
@@ -207,7 +209,9 @@ def merge_settings(
     Previous KASPER hooks are stripped before the current ones are appended, so a re-install
     replaces its own wiring instead of doubling it; ``allow`` and ``deny`` become the union
     with the existing order kept; every other key — the user's model, theme, their own hooks
-    and permission keys — survives untouched.
+    and permission keys — survives untouched. Any further top-level key in the repo settings
+    (e.g. ``autoContinueAtUsageLimit``) is copied in only when the home lacks it; a home value,
+    even an explicit ``false``, always wins.
 
     Args:
         existing: The home settings, or ``{}`` when there are none; not modified.
@@ -235,6 +239,11 @@ def merge_settings(
             permissions[key] = entries
     if permissions:
         merged["permissions"] = permissions
+    # Any other repo key (a plain setting) is seeded only when home lacks it, so the user's own
+    # value — even an explicit false — always wins.
+    for key, value in kasper.items():
+        if key not in _MERGED_KEYS and key not in merged:
+            merged[key] = copy.deepcopy(value)
     return merged
 
 

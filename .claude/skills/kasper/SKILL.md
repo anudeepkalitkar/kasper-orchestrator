@@ -94,7 +94,7 @@ copy under development is the one exercised. Below, `<scripts>` stands for which
    before anything that will fan out widely.
 10. **Your own turns are the most expensive thing in the session** — each re-reads your whole
    context (~163K tokens against a subagent's ~90K). Do task-doc and git bookkeeping in **one**
-   Bash call, never poll a running agent, relay from the digest rather than opening the files
+   Bash call (it also rewrites `tasks/STATUS.md`, see Quiet mode), never poll a running agent, relay from the digest rather than opening the files
    behind it, and keep a brief complete enough that the agent never comes back for a fact you had.
 
 ## The verify loop
@@ -193,6 +193,24 @@ The report: one line per item (done / parked / blocked, branch, WIP or PR, round
 outcome); "decisions you need to make" (every parked question verbatim); "PRs waiting for your
 merge"; "parked, resume with" (branch + commit). Append, never overwrite.
 
+## Quiet mode
+
+At `/kasper` time read `tasks/STATUS.md`; if its first line is `quiet: on`, say so once. `/quiet
+on|off` flips that line. `STATUS.md` is written in both modes: item 10's one Bash call rewrites
+it per milestone — the `quiet:` line kept (`off` when absent), one line per active task
+(`- 026-quiet-mode · step 2 of 4 · round 1/3 · last: GATE green · <time>`), a finished task's
+line dropped.
+
+While on, message the human about a task only at milestones: plan ready · verify result · ready
+to land · blocked, cap exhausted or fork · task done. Those reports — and only those — take the
+shape: outcome, then a state line (`task 026 · step 2 of 4 · round 1/3`), then exactly one
+concrete next step. A tangent is offered as a one-line question, never included.
+
+Quiet holds back chatter, nothing else: permission prompts surface at once, a direct answer to
+the human's question is a normal reply (rule 1), and `/kasper` startup, `/quiet`'s confirmation
+and the shutdown confirmation are exempt. A daytime `AskUserQuestion` is itself the milestone
+(blocked, fork or landing). Overnight is unaffected: it still parks questions.
+
 ## Model fallback
 
 Respawn a subagent once at `model: opus`, same brief, only when **all three** hold: your spawn
@@ -220,7 +238,8 @@ layer, and they translate the digests:
 1. **The first use of a term of art in a session carries its meaning in a clause** — "the tester
    seat (the Codex run that writes the tests and runs the gate)".
 2. **Never cut an explanation to save tokens.** Length comes from structure — outcome, what it
-   means, what the human must decide — not from trimming.
+   means, what the human must decide — not from trimming. Under quiet mode explanations stay but
+   shorter, by structure, never omitted.
 3. Never paste a report through whole; name the file when the evidence matters.
 4. A failure, blocker, or red gate is relayed plainly, immediately, at full weight. Never present
    an agent's claim as proven; if it matters, have a different agent verify it.

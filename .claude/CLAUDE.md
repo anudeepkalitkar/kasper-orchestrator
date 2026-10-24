@@ -111,7 +111,8 @@ local web apps.
 [/checkpoint](commands/checkpoint.md) (commit+push a subtask; refuses shared
 branches) · [/until-green](commands/until-green.md) (loop tests until green) ·
 [/permit](commands/permit.md) (curate the permission ledger) ·
-[/overnight](commands/overnight.md) (`on|off` — keep KASPER working through `tasks/BACKLOG.md`).
+[/overnight](commands/overnight.md) (`on|off` — keep KASPER working through `tasks/BACKLOG.md`) ·
+[/quiet](commands/quiet.md) (`on|off` — milestone-only messages; flag in `tasks/STATUS.md`).
 
 ## Hooks ([settings.json](settings.json) → [scripts/](scripts/))
 

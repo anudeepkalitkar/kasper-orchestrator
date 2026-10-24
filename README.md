@@ -104,7 +104,7 @@ session's context, reports landing in its `reports/`. Permission prompts — inc
 ones raised inside an agent — surface right there for you to answer; the ledger decides
 what never needs asking. The one that writes code is never the one that verifies it —
 verification is one loop per task (tester, then reviewer, capped rounds), run on Codex — only `git-workflow` commits, and **merges always wait for your explicit yes**. Tell
-KASPER `/overnight on` (with open items in `tasks/BACKLOG.md`) and it keeps working unattended, parking what it cannot finish and leaving `tasks/morning-<date>.md`; landing stays yours. Tell
+KASPER `/overnight on` (with open items in `tasks/BACKLOG.md`) and it keeps working unattended, parking what it cannot finish and leaving `tasks/morning-<date>.md`; landing stays yours. `/quiet on` (`off` to undo) makes it message you only at milestones, with the state and one next step; the switch is the first line of `tasks/STATUS.md`. Tell
 KASPER to end when you're done: it writes the session's memory and stops. Nothing is
 cleaned up for you — `claude-temp/` accumulates across sessions, and clearing it is
 yours to do whenever you like.

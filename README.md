@@ -54,8 +54,9 @@ recorded in `~/.claude/kasper-manifest.json`.
 - `--dry-run` — print the plan (create / overwrite / unchanged / merge / remove, plus every
   backup it would take) and write nothing at all.
 - `--status` — check the home against the manifest: exit **0** when every installed file
-  still matches and `settings.json` still carries the hooks, **1** on any drift or when
-  nothing is installed.
+  still matches, `settings.json` still carries the hooks and every plain setting the install
+  seeds (a missing one prints `behind  <key> in settings.json`; a value you changed is yours),
+  **1** on any drift or when nothing is installed.
 - `--uninstall` — delete the installed files that are still untouched, keep and report any
   you edited, and strip KASPER's hooks from `settings.json`; the permissions block and the
   ledger stay behind, the ledger because your grants live in it, and so does any plain setting

@@ -632,3 +632,23 @@ def test_status_report_source_changes_are_behind_without_hiding_local_edits() ->
         "missing": "missing",
         "same": "ok",
     }
+
+
+@pytest.mark.parametrize("value", [False, None, "custom", 0, {}])
+def test_missing_settings_keys_only_reports_absent_plain_keys(value: object) -> None:
+    """User values, including false and null, count as present; merged keys never count."""
+    existing = {"model": value, "homeOnly": True}
+    source = {"hooks": {}, "permissions": {}, "model": "default", "theme": "dark", "new": True}
+    assert install.missing_settings_keys(existing, source) == ["theme", "new"]
+    assert existing == {"model": value, "homeOnly": True}
+    assert install.missing_settings_keys(existing, {}) == []
+
+
+def test_merge_settings_seeds_missing_plain_values_without_aliasing() -> None:
+    """Nested defaults are copied while existing home choices remain authoritative."""
+    source = {"new": {"items": ["default"]}, "model": "default"}
+    merged = install.merge_settings({"model": False}, source, "python3")
+    assert merged["model"] is False
+    assert merged["new"] == {"items": ["default"]}
+    merged["new"]["items"].append("home edit")
+    assert source["new"] == {"items": ["default"]}

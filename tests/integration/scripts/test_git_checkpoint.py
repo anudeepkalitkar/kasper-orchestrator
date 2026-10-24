@@ -169,3 +169,19 @@ def test_only_refuses_prestaged_rename_from_undeclared_path(
     assert "other.py" in result.stderr
     assert git(checkpoint_repo, "rev-parse", "HEAD") == before_head
     assert git(checkpoint_repo, "diff", "--cached", "--binary") == before_index
+
+
+def test_only_commits_tracked_worktree_deletion(
+    repo_root: Path, checkpoint_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deleted file still in the index is a valid scoped checkpoint operand."""
+    path = checkpoint_repo / "deleted.py"
+    path.write_text("value = 1\n", encoding="utf-8")
+    git(checkpoint_repo, "add", "--", path.name)
+    git(checkpoint_repo, "commit", "-m", "seed tracked file")
+    path.unlink()
+    monkeypatch.chdir(checkpoint_repo)
+    module = load_script(repo_root, "git_checkpoint")
+    assert module.main(["record deletion", "--no-push", "--only", path.name]) == 0
+    assert git(checkpoint_repo, "ls-tree", "--name-only", "HEAD") == ""
+    assert git(checkpoint_repo, "log", "-1", "--format=%s").strip() == "record deletion"

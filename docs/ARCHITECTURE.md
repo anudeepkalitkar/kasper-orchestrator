@@ -53,8 +53,9 @@ into `~/.claude/`, rendering the interpreter name into hook commands per platfor
 `denials` left alone). Details: those two docstrings. Anything about to change is
 copied into `~/.claude/kasper-backup-<UTC>/` first, and `~/.claude/kasper-manifest.json` records
 the hash of each **owned** file written plus the `source` checkout — the merged files are not
-hashed. `--dry-run` prints the plan; `--status` reports owned-file drift against the manifest and
-whether the hooks are still wired (exit 0 clean, 1 drift or error); `--uninstall` removes what
+hashed. `--dry-run` prints the plan; `--status` reports owned-file drift against the manifest,
+whether the hooks are still wired, and any seeded top-level settings key the home lacks (exit 0
+clean, 1 drift or error); `--uninstall` removes what
 the manifest records, keeping anything edited since.
 
 ### Hooks — `.claude/settings.json` → `.claude/scripts/run_hook.py` → one script
@@ -128,10 +129,11 @@ Of the six commands in `.claude/commands/`, two have a script:
 **/new-task** → `.claude/scripts/new_task.py --branch` scaffolds `tasks/<NNN>-<slug>.md` and
 creates `feat/<NNN>-<slug>`, refusing unless the mainline is checked out, clean and not behind;
 **/checkpoint** → `.claude/scripts/git_checkpoint.py` commits and pushes the current subtask,
-refusing the four names `master`, `main`, `development`, `qa` (a mainline under any other name
-is not refused), a detached HEAD, and any local-only path (`tasks/`, `claude-temp/`,
+refusing the four names `master`, `main`, `development`, `qa` plus the mainline `new_task.py`
+resolves under any other name (the four alone when it cannot be resolved), a detached HEAD, and any local-only path (`tasks/`, `claude-temp/`,
 `claude-memory/`, `docs/adr/` when the exclude file lists it, env files); `--only` narrows a
-parallel node to its declared files. **/adr**, **/overnight**, **/permit** and **/until-green**
+parallel node to its declared files, refusing any operand that neither exists nor is tracked
+(so a stray trailing message is caught before staging). **/adr**, **/overnight**, **/permit** and **/until-green**
 are prompt-only (**/permit** drives the gate by hand).
 
 ## The session lifecycle

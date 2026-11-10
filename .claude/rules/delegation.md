@@ -35,8 +35,8 @@ cannot spawn agents, message each other, or ask the human anything.
 3. **Brief completely, then budget:** the facts, the exact files to read, the scratch dir, a
    tool-call budget — turns are what cost money, so a well-briefed fresh agent beats one that
    goes looking.
-4. **Every spawn carries the routed tier** ([[model-routing]]) — a spawn with none inherits the
-   session's own, the most expensive.
+4. **Every spawn carries a tier KASPER picked from the agent's allowed set** ([[model-routing]]) —
+   a spawn with none inherits the session's own, the most expensive.
 
 ## Parallelize independent work
 Batch independent agent calls in **one message**; serialize only true dependencies. Parallel

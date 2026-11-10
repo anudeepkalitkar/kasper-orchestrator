@@ -44,16 +44,16 @@ around a prompt.
 7. [documentation](rules/documentation.md) — durable docs in `docs/`, committed;
    living task docs in `tasks/` are local-only, never committed; append-only ADRs in
    `docs/adr/` are committed in a private repo, local-only in a public one; drift is a defect.
-8. [model-routing](rules/model-routing.md) — the model tier is scored from each
-   brief at spawn time and passed as the Agent tool's `model`; agent files pin no model,
-   and a spawn that passes none inherits the session's own — the most expensive.
+8. [model-routing](rules/model-routing.md) — each agent's allowed model set; KASPER picks
+   the tier from that set by judgment at spawn time and always passes it as the Agent tool's
+   `model` — a spawn that passes none inherits the session's own, the most expensive.
 
 ## KASPER — one session, nine agents and three Codex seats
 
 `/kasper` ([skills/kasper/SKILL.md](skills/kasper/SKILL.md)) turns the session it
 is typed in into the project's KASPER. It raises nothing: the nine Claude disciplines are
-**subagents of that session**, spawned per task with the Agent tool — each at the model tier
-`model_route.py` scores from its brief, since no agent file pins one; the three verification
+**subagents of that session**, spawned per task with the Agent tool — each at a model tier
+KASPER picks from that agent's allowed set, since no agent file pins one; the three verification
 seats are Bash calls into the OpenAI Codex CLI, not agents. Chain law: human → KASPER →
 agents, one hop. Agents cannot spawn agents, cannot message each other, and cannot ask the
 human anything — an agent that hits a fork stops and reports it; KASPER asks and resumes
@@ -140,9 +140,8 @@ the project's own `.claude/scripts/<name>.py` runs instead only in the source re
 - Command helpers: [git_checkpoint.py](scripts/git_checkpoint.py) (backs
   `/checkpoint`) · [new_task.py](scripts/new_task.py) (backs `/new-task`). Beside them,
   [codex_seat.py](scripts/codex_seat.py) runs a Codex verification seat,
-  [debate.py](scripts/debate.py) runs a contested question's debate, and
-  [model_route.py](scripts/model_route.py) picks the model tier for one spawn (it backs
-  the routing step) — KASPER calls all three directly; none is a hook.
+  [debate.py](scripts/debate.py) runs a contested question's debate — KASPER calls both
+  directly; neither is a hook.
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
   shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
   never those.

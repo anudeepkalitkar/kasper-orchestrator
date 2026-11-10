@@ -123,14 +123,6 @@ def seat_process(codex_seat: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Moc
 
 
 @pytest.fixture
-def model_route(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    """Load the pure router and prevent argparse locale filesystem lookups."""
-    module = load_script(repo_root, "model_route")
-    monkeypatch.setattr(module.argparse, "_", lambda message: message)
-    return module
-
-
-@pytest.fixture
 def debate_files(debate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict[Path, str]:
     """Supply a wholly in-memory filesystem and frozen clock for debate execution."""
     files = {Path("brief.md"): "Task brief"}

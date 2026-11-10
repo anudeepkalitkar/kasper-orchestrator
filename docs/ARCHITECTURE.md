@@ -33,7 +33,7 @@ flowchart TB
         cmds["commands → new_task.py · git_checkpoint.py"]
     end
     home --> session
-    skill -- "model_route.py picks the tier,<br/>Agent tool spawns" --> agents["9 agents (.claude/agents/)<br/>4 developers · triager · architect · documentor · git-workflow · researcher"]
+    skill -- "KASPER picks the tier from the allowed set,<br/>Agent tool spawns" --> agents["9 agents (.claude/agents/)<br/>4 developers · triager · architect · documentor · git-workflow · researcher"]
     skill -- "one Bash call" --> seats["codex_seat.py → Codex CLI<br/>tester · reviewer · arch-reviewer<br/>prompts: .claude/codex/ + stacks/"]
     skill -- "contested question" --> debate["debate.py → claude -p + codex exec<br/>prompts: .claude/debate/"]
     hooks -- "reads / writes" --> ledger["permissions-ledger.json (project copy, else home)<br/>+ permission-unknowns.log"]
@@ -88,10 +88,9 @@ names the tools, no file pins a model. Four developers — python, typescript, t
 write code and never touch `tests/` or commit; the triager plans a tree of parallel nodes; the
 architect writes `docs/design/` specs and proposed ADRs; the documentor owns the written truth;
 git-workflow is the only committer (merges on the human's relayed yes); the researcher reads
-external facts. Before every spawn KASPER runs `.claude/scripts/model_route.py --agent <name>
---brief <file>`, which scores the brief (size, novelty, ambiguity, risk), clamps to the agent's
-bounds (the architect is always `fable`) and prints one tier for the Agent tool's `model`; the
-constants are mirrored in `.claude/rules/model-routing.md`.
+external facts. Each agent file carries one `Allowed models: <a> | <b>` body line, mirroring the
+table in `.claude/rules/model-routing.md`; before every spawn KASPER picks a tier from that set by
+judgment and always passes it as the Agent tool's `model`.
 
 ### Verification — `.claude/scripts/codex_seat.py`
 

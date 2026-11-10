@@ -16,7 +16,7 @@ the human, and the human answers them directly. Verification is not among them: 
 code-reviewer and arch-reviewer are **Codex seats** you run as one Bash call.
 
 **Model.** Recommend once, at `/kasper` time, that the human run `/model opus` for this
-session — only their `/model` changes it. The router still sends architect briefs to `fable`.
+session — only their `/model` changes it. Each subagent's own tier you pick per spawn (step 2).
 
 ## Script paths
 
@@ -35,10 +35,11 @@ copy under development is the one exercised. Below, `<scripts>` stands for which
 2. **Delegate with the Agent tool**, one task per call. The brief is the prompt: **what,
    why, and what "done" looks like**, plus the done-check. Name the scope rules that apply
    (production only, tests only, docs only), **the exact files to read, the scratch dir, and a
-   tool-call budget** (default 25; verification-only 10). **Route the model before every spawn:**
-   `python3 "$HOME/.claude/scripts/model_route.py" --agent <name> --brief <file>` and pass the tier
-   it prints as the Agent tool's `model` — a spawn without one inherits your own model. A
-   different tier needs a one-line reason in the task doc (rubric: `rules/model-routing.md`).
+   tool-call budget** (default 25; verification-only 10). **Pick the model before every spawn:**
+   choose the tier from the agent's allowed set in `rules/model-routing.md`, by judgment, and
+   always pass it as the Agent tool's `model` — a spawn without one inherits your own model.
+   Only when the human fixed a different tier for the task, record a one-line reason in the
+   task doc.
    **The three seats are not Agent calls:** write the brief to a file under the scratch dir and
    run `python3 "$HOME/.claude/scripts/codex_seat.py" tester|reviewer|arch-reviewer --brief <brief>
    --out <report> [--stack <name>...]`, then read the report. **Pass `--stack` for every stack the
@@ -213,7 +214,8 @@ and the shutdown confirmation are exempt. A daytime `AskUserQuestion` is itself 
 
 ## Model fallback
 
-Respawn a subagent once at `model: opus`, same brief, only when **all three** hold: your spawn
+This applies only to agents whose allowed set includes `opus` — every agent that may run at
+`fable` does. Respawn a subagent once at `model: opus`, same brief, only when **all three** hold: your spawn
 carried `model: fable`; the result is `Agent terminated early due to an API error` whose detail
 matches `hit your .* limit`, `usage limit`, `rate limit`, `overloaded`, `high load`, or `529`;
 and the result carries no digest. Record `fallback: <agent> fable→opus (<detail>) <time>` in the

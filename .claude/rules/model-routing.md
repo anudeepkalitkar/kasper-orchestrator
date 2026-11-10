@@ -1,57 +1,34 @@
-# Rule: Model Routing — the tier is picked per spawn, never pinned in a file
+# Rule: Model Routing — KASPER picks each spawn's tier from the agent's allowed set
 
-**Every subagent spawn carries a model tier that a script picked from that spawn's brief —
-agent files pin no model at all.** Cost then tracks task complexity instead of the habit of
-whoever wrote the agent definition, and because the four tiers are aliases — `haiku`,
-`sonnet`, `opus`, `fable`, each resolving to the newest model of its tier — a new model ships
-and nothing here needs editing.
+**Every subagent spawn carries a `model` that KASPER picked, by judgment, from that agent's
+allowed set below — never outside it, and never omitted.** A spawn with no `model` inherits the
+session's own model, the most capable and most expensive one in play. The four tiers are
+aliases — `haiku`, `sonnet`, `opus`, `fable` — each resolving to the newest model of its tier,
+so a new model ships and nothing here needs editing.
 
-## The command
-Before every Agent-tool spawn, KASPER runs:
+## The allowed sets (authoritative)
+| Agent | Allowed models |
+|---|---|
+| python-developer, typescript-developer, terraform-developer, devops-developer | opus \| fable |
+| architect | opus \| fable |
+| triager | sonnet \| opus |
+| documentor | sonnet \| opus |
+| git-workflow | haiku \| sonnet |
+| researcher | haiku \| sonnet |
 
-```bash
-python3 "$HOME/.claude/scripts/model_route.py" --agent <name> --brief <file>   # or: … --agent <name> < brief
-```
+Each agent file carries the same set as one body line, `Allowed models: <a> | <b>`; its
+frontmatter pins no model. The table and every agent file's line must agree — drift between
+them is a defect.
 
-Stdout is exactly one tier; pass it as the Agent tool's `model` override. `--explain` adds six
-lines on **stderr** — `size`, `novelty`, `ambiguity`, `risk`, `total: N -> <tier>`,
-`bounds: <agent> [floor, ceiling] -> <tier>` — so stdout stays bare. Exit 0 means a tier was
-printed; exit 2 means bad arguments or an unreadable brief.
-
-## The rubric — one table, quoting the script's constants
-| What it scores | The exact values | Effect |
-|---|---|---|
-| **size** — distinct file paths named in the brief (a token holding `/`, or ending `.py .md .json .toml .yaml .yml .ts .tsx .js .jsx .sh .sql .txt .cfg .ini .html .css`) | ≤ 1 path · ≤ 3 · ≤ 8 · more | 0 · 1 · 2 · 3 |
-| **size** — brief length | longer than 2500 characters | +1 |
-| **novelty** | new, create, design, from scratch, architecture, introduce, greenfield | +2 when any appears |
-| **novelty** — routine work, only when no novelty word appeared | fix, rename, typo, bump, docstring, comment, reword, format | −1 |
-| **ambiguity** | investigate, debug, root cause, unclear, decide, choose, options, why does, intermittent, flaky | +1 each, capped at 3 |
-| **risk** | migration, auth, security, concurrency, race, async, crypto, payment, delete, data loss, production, terraform, infra, permission, ledger | +2 each, capped at 6 |
-| **exclusion** — outside the risk list, a phrase is not counted only when it is the object of an explicit exclusion in one clause (no `.` `!` `?` `;` `:` `,` or newline between): a prohibition (`do not`, `don't`, `never`, `must not`, `mustn't`), then an action verb (`touch`, `edit`, `change`, `modify`, `delete`, `write`, `run`), then at most `EXCLUSION_OBJECT_WORDS` = 4 words before the phrase. `no`, `without`, `avoid`, `cannot`, `won't` suppress nothing; a risk word that is itself the verb ("never delete files") still counts | "never touch the ambiguity word" scores nothing; every list above except risk — risk words are never discounted: "never touch the ledger" and "do not change behavior during migration" still score 2 |
-| **total → tier** (total is floored at 0) | ≤ 1 · ≤ 5 · ≤ 11 · above 11 | haiku · sonnet · opus · fable |
-| **bounds** — `architect` | floor fable, ceiling fable | always fable |
-| **bounds** — `git-workflow`, `researcher` | floor haiku, ceiling sonnet | tier lowered to sonnet if higher |
-| **bounds** — every other agent | floor haiku, ceiling fable | unchanged |
-
-Each phrase counts **once**, matched case-insensitively on word boundaries — so `async` does
-not match `asyncio`, and a word repeated ten times still scores once.
+## Choosing within a set
+- The **lower** tier for routine, well-specified, small work.
+- The **higher** tier for novel, ambiguous, risky or large work.
+- **When unsure, pick the higher.**
 
 ## Overrides
-- **A spawn never omits the tier.** A spawn with no `model` override inherits the session's own
-  model — the most capable and the most expensive one in play. Forgetting the router is the
-  expensive failure mode, not misrouting.
-- KASPER may spawn at a different tier than the script printed, but only with a one-line reason
-  recorded in the task doc ([[documentation]]).
-- The human may fix a tier for a task; that instruction outranks both the script and KASPER.
+- The human may fix a tier for a task; that outranks KASPER. When it differs from what KASPER
+  would pick, KASPER records a one-line reason in the task doc ([[documentation]]).
+- The human changes the sets by editing this table and the matching agent lines, together.
 
-## Tuning and the seam
-The rubric is a first heuristic and its accuracy is unmeasured. Tune it by editing the
-constants in `model_route.py` and mirroring the table above **in the same commit** — a table
-that disagrees with the constants is a defect, not a rounding error. `route()` is the single
-function the whole rubric hangs off: a learned classifier (Laya) can replace that one function,
-keep its signature, and leave the CLI and its callers untouched — per ADR-0013, whose decision
-record is local-only in this public repo.
-
-Related: [[delegation]] (every spawn carries the routed tier), [[autonomous-workflow]] (briefs
-carry a done-check and a budget — the same text the router scores), [[documentation]] (an
-override's reason lives in the task doc).
+Related: [[delegation]] (every spawn carries a tier KASPER picked from the allowed set),
+[[documentation]] (an override's reason lives in the task doc).

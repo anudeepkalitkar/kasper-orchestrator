@@ -30,7 +30,18 @@ write is accepted for that seat only.
 Reads are free: web search/fetch, cloning public repos, downloading packages into the project,
 read-only API calls. **Writes** are publishing (cached, indexed, sometimes paid); standing
 exceptions only:
-1. `git push` to feature branches of the user's own repos ([[git-workflow]]).
+1. `git push` of a non-shared branch or a tag, of the user's own repos ([[git-workflow]]). It runs
+   unprompted only when `bash_permission_gate.py` (`push_denial`) can prove it safe from the command
+   text plus one `git for-each-ref` lookup; anything it cannot read or prove is a hard deny, in every
+   mode. Denied by class: force (`--force*`, `-f`, `+refspec`) and `--all`/`--mirror`/`--branches`;
+   a destination that is a shared branch (master/main/development/qa + origin's HEAD branch, in any
+   spelling) or no refspec/`HEAD` while the current branch is shared or detached; any option off a
+   closed list, or any non-literal token (`$VAR`, globs, backticks, quotes); an env assignment or
+   wrapper ahead of `git`; a git option other than `-C`/`--no-pager` ahead of `push`; a directory
+   change the hook cannot follow (only `git -C <dir> push` or a command opening with
+   `cd <dir> && git push` is read); and an unreadable branch lookup (not a repo, timeout). Known
+   residuals, not judged: a push hidden in `bash -c`, a script or an alias; a repo whose
+   `push.default` or `remote.*.push` config sends a bare push elsewhere.
 2. `gh` ops on the user's own repos that support the workflow: PR comments, own-PR descriptions,
    opening the task's PR. Merging stays human.
 3. Calls the project's own code makes with already-configured credentials. A loop hammering a paid
@@ -48,7 +59,7 @@ one escalates. **Secrets never leave the machine** except to the service they be
   plus guarded words — `git` + `merge`) and `ask_patterns` (regex). Unknowns fall through to a
   one-time prompt and are logged to `.claude/permission-unknowns.log`.
 - **Recorder** (`permission_recorder.py`, PostToolUse): a granted prompt becomes a `grant`;
-  destructive/outward heads (`rm`, `curl`, `ssh`, `bash`, `open`, non-feature `git push`, …) never
+  destructive/outward heads (`rm`, `curl`, `ssh`, `bash`, `open`, `git push` to a shared branch, …) never
   auto-promote. **`/permit`** curates by hand.
 
 Compose from allowed forms (WebFetch over `curl`); never restructure a command to evade a guard.

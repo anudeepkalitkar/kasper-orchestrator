@@ -8,8 +8,9 @@ twice. Guardrails:
 
   * Commands matching an ask-pattern/denial are NEVER promoted — that approval was one-time.
   * Destructive / outward-facing / arbitrary-execution heads (``rm``, ``curl``, ``bash``, ``ssh``,
-    ``open``, ...) are never promoted; nor is any ``git push`` form beyond the feature-branch
-    pattern already in the ledger. Promote those deliberately with ``/permit`` if ever wanted.
+    ``open``, ...) are never promoted; nor is any ``git push`` form — the ledger's seeded
+    ``git push`` allow key already covers every push the gate's push guard lets through.
+    Promote the others deliberately with ``/permit`` if ever wanted.
   * Grants record only in the modes where the human is actually prompted (``default``,
     ``acceptEdits``, ``plan``). Any other mode — ``bypassPermissions``, auto mode (whose
     approvals come from a safety classifier, not the human), or a missing/unknown mode —
@@ -155,7 +156,7 @@ def _grant_key(part: str) -> str | None:
         return None  # an argument (path/URL/data) landed in the key — not a clean op prefix
     key = " ".join(key_tokens)
     if key.startswith("git push"):
-        return None  # only the feature-branch pattern auto-allows pushes
+        return None  # the seeded allow key covers pushes; a guarded one is never a grant
     return key
 
 

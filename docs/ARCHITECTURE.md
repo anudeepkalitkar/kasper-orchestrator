@@ -78,8 +78,14 @@ never 2 (2 would block the call).
 **The ledger in use** is the project's `.claude/permissions-ledger.json` when one exists, else
 `~/.claude/permissions-ledger.json` — so in a project without its own ledger, grants and the
 unknowns log land in the home. Settings also carry the deny backstop (`sudo`, `rm -rf`, force-push,
-shared-branch pushes, credential paths) and a narrow allow list of routine `git`/`gh` forms for auto
-mode; the ledger widens what auto-runs, never those.
+shared-branch pushes, credential paths) and a narrow allow list of routine `git`/`gh` forms (any
+`git push` included) for auto mode, where the gate hook's `push_denial` runs first and hard-denies
+every push it cannot prove safe from the command text and one `git for-each-ref` lookup: force,
+`--all`/`--mirror`, shared-branch destinations (`master`/`main`/`development`/`qa` + origin's HEAD),
+unreadable tokens or options, env/wrapper prefixes, and directory changes it cannot follow
+(`git -C <dir> push` or a leading `cd <dir> && git push` are read). Not judged: a push inside
+`bash -c`, a script or an alias, and non-default `push.default`/`remote.*.push` config. The ledger
+widens what auto-runs, never those.
 
 ### The roster — `.claude/agents/`
 
@@ -156,7 +162,7 @@ and edited by people and agents only with permission, through `install.py`; the 
 write three things there — the harness memory link under `~/.claude/projects/`, and the home
 ledger's `grants` and `permission-unknowns.log` when the project has no ledger of its own. Reads are
 free except credentials and dotfiles. Network reads are free; writes are deny-by-default with
-three standing exceptions — feature-branch pushes, `gh` operations on the user's own PRs, and
+three standing exceptions — pushes to non-shared branches, `gh` operations on the user's own PRs, and
 calls the project's own code makes. The ledger governs what Bash auto-runs; a guard (`ask_words`,
 `ask_patterns`) beats every allow and grant, and a prompt is never worked around. The full rule is
 `.claude/rules/boundaries.md`.

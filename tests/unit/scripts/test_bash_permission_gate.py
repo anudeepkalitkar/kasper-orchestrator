@@ -1,6 +1,8 @@
 """Pure classification regressions for live, literal and opaque substitutions."""
 
+import subprocess
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 
@@ -346,3 +348,454 @@ def test_literal_payload_and_safe_scaffolding_remain_allowed(
     assert permission_gate.evaluated_payload(command) is None
     assert permission_gate.ask_match(command, ledger) is None
     assert permission_gate.unallowed_parts(command, ledger) == []
+
+
+@pytest.mark.parametrize(
+    ("command", "branch", "origin_head", "denied", "directory"),
+    [
+        ("git push", "feat/x", "trunk", False, "/repo"),
+        ("git push -u origin HEAD", "feat/x", "trunk", False, "/repo"),
+        ("git push origin feat/x", "feat/x", "trunk", False, "/repo"),
+        ("git push origin v1.0.0", "feat/x", "trunk", False, "/repo"),
+        ("git push --all", "feat/x", None, True, "/repo"),
+        ("git push --mirror", "feat/x", None, True, "/repo"),
+        ("git push --branches", "feat/x", None, True, "/repo"),
+        ("git push origin +feat/x", "feat/x", None, True, "/repo"),
+        ("git push origin HEAD:master", "feat/x", None, True, "/repo"),
+        ("git push --repo origin master", "feat/x", None, True, "/repo"),
+        ("git push --repo=origin master", "feat/x", None, True, "/repo"),
+        ("git push -u origin master", "feat/x", None, True, "/repo"),
+        ("git push --force", "feat/x", None, True, "/repo"),
+        ("git push -f", "feat/x", None, True, "/repo"),
+        ("git push --force-with-lease", "feat/x", None, True, "/repo"),
+        ("git push", "master", None, True, "/repo"),
+        ("git push", None, None, True, "/repo"),
+        ("git push origin HEAD", None, None, True, "/repo"),
+        ("cd /x && git push", "master", None, True, "/x"),
+        ("git -C /x push", "master", None, True, "/x"),
+        ("git push origin feat/x:trunk", "feat/x", "trunk", True, "/repo"),
+        ("git push origin HEAD:development", "feat/x", None, True, "/repo"),
+        ("git push origin HEAD:main", "feat/x", None, True, "/repo"),
+        ("git push origin HEAD:qa", "feat/x", None, True, "/repo"),
+        ("git push origin HEAD:refs/heads/master", "feat/x", None, True, "/repo"),
+        ('git push origin "HEAD:$TARGET"', "feat/x", None, True, "/repo"),
+        ("git push origin 'refs/heads/*:refs/heads/*'", "feat/x", None, True, "/repo"),
+    ],
+)
+def test_push_denial_enforces_destination_and_force_policy(
+    permission_gate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    branch: str | None,
+    origin_head: str | None,
+    denied: bool,
+    directory: str,
+) -> None:
+    """Ordinary pushes proceed; force, shared, and unreadable destinations are blocked."""
+    lookup = Mock(return_value=(branch, origin_head))
+    monkeypatch.setattr(permission_gate, "_branch_state", lookup)
+    monkeypatch.setattr(
+        permission_gate.subprocess, "run", Mock(side_effect=AssertionError("real subprocess"))
+    )
+    reason = permission_gate.push_denial(command, "/repo")
+    if denied:
+        assert isinstance(reason, str) and reason
+    else:
+        assert reason is None
+    if lookup.called:
+        lookup.assert_called_once_with(directory)
+
+
+@pytest.fixture
+def push_gate(permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Fake branch discovery and reject any accidental real subprocess call."""
+
+    def branch_state(cwd: str | None) -> tuple[str | None, str | None]:
+        return ("feat/x", "trunk") if cwd is not None else (None, None)
+
+    monkeypatch.setattr(permission_gate, "_branch_state", branch_state)
+    monkeypatch.setattr(
+        permission_gate.subprocess, "run", Mock(side_effect=AssertionError("real subprocess"))
+    )
+    return permission_gate
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "--repo origin",
+        "--repo=origin",
+        "--push-option master origin",
+        "--push-option=master origin",
+        "--receive-pack master origin",
+        "--receive-pack=master origin",
+        "--exec master origin",
+        "--exec=master origin",
+        "--recurse-submodules on-demand origin",
+        "--recurse-submodules=on-demand origin",
+        "-o master origin",
+        "-omaster origin",
+    ],
+)
+@pytest.mark.parametrize("destination", ["master", "feat/x"])
+def test_push_value_options_preserve_destination(
+    push_gate: ModuleType, options: str, destination: str
+) -> None:
+    """Option values must neither hide shared destinations nor become refspecs."""
+    reason = push_gate.push_denial(f"git push {options} {destination}", "/repo")
+    if destination == "master":
+        assert isinstance(reason, str) and reason
+    else:
+        assert reason is None
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--al",
+        "--rep",
+        "--rep=origin",
+        "-uo",
+        "--prune",
+        "--future-option",
+        "--force-with-lease=refs/heads/feat/x:abc",
+        "--force-if-includes",
+        "-uf",
+    ],
+)
+def test_unknown_and_force_push_options_deny(push_gate: ModuleType, option: str) -> None:
+    """Abbreviations, unsupported options and every force form fail closed."""
+    reason = push_gate.push_denial(f"git push {option} origin feat/x", "/repo")
+    assert isinstance(reason, str) and reason
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--set-upstream",
+        "--tags",
+        "--follow-tags",
+        "--no-follow-tags",
+        "--delete",
+        "--dry-run",
+        "--porcelain",
+        "--atomic",
+        "--no-atomic",
+        "--quiet",
+        "--verbose",
+        "--progress",
+        "--no-progress",
+        "--thin",
+        "--no-thin",
+        "--verify",
+        "--no-verify",
+        "--signed",
+        "--signed=true",
+        "--signed=if-asked",
+        "--no-signed",
+        "--ipv4",
+        "--ipv6",
+        "--no-recurse-submodules",
+        "-u",
+        "-q",
+        "-v",
+        "-n",
+        "-d",
+        "-4",
+        "-6",
+        "-uqvn4",
+    ],
+)
+@pytest.mark.parametrize("destination", ["master", "feat/x"])
+def test_known_push_flags_preserve_destination(
+    push_gate: ModuleType, option: str, destination: str
+) -> None:
+    """Known flags allow feature pushes while retaining the shared-branch guard."""
+    reason = push_gate.push_denial(f"git push {option} origin {destination}", "/repo")
+    if destination == "master":
+        assert isinstance(reason, str) and reason
+    else:
+        assert reason is None
+
+
+@pytest.mark.parametrize(
+    ("option", "forbidden"),
+    [
+        ("-C /x", False),
+        ("-c push.default=matching", True),
+        ("--git-dir /x", True),
+        ("--git-dir=/x", True),
+        ("--work-tree /x", True),
+        ("--work-tree=/x", True),
+        ("--namespace push", True),
+        ("--namespace=push", True),
+        ("--super-prefix push", True),
+        ("--super-prefix=push", True),
+        ("--attr-source push", True),
+        ("--attr-source=push", True),
+        ("--config-env push.default=POLICY", True),
+        ("--config-env=push.default=POLICY", True),
+    ],
+)
+@pytest.mark.parametrize("arguments", ["", "origin HEAD", "origin master", "origin feat/x"])
+def test_global_options_do_not_hide_push_or_infer_redirected_destination(
+    push_gate: ModuleType, option: str, forbidden: bool, arguments: str
+) -> None:
+    """Only directory and pager options may precede a provably safe push."""
+    reason = push_gate.push_denial(f"git {option} push {arguments}", "/repo")
+    denied = forbidden or arguments == "origin master"
+    if denied:
+        assert isinstance(reason, str) and reason
+    else:
+        assert reason is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push",
+        "git push -u origin HEAD",
+        "git push -u origin feat/x",
+        "git push origin v1.0.0",
+        "cd /repo && git push",
+        "git -C /repo push -u origin HEAD",
+        "git -C/repo push",
+        "git --no-pager push",
+        "git push 2>&1",
+        "git push >/dev/null",
+        "git push > output",
+        "git push --tags",
+        "git push origin --delete feat/x",
+        "git push origin :feat/x",
+        "git push origin HEAD:refs/heads/feat/y",
+        "git push -u origin feat/x 2>&1 | tail -5",
+        "git status && git push",
+        "git push origin @",
+        "if git push; then echo done; fi",
+        "! git push",
+        "{ git push; }",
+    ],
+)
+def test_proven_feature_pushes_allow(push_gate: ModuleType, command: str) -> None:
+    """Core overnight commands remain usable when branch discovery succeeds."""
+    assert push_gate.push_denial(command, "/repo") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin :",
+        "git push origin feat/x:",
+        "git push origin a:b:c",
+        "git push origin feat/x:@",
+        "git push origin HEAD:heads/master",
+        "git push origin HEAD:refs/master",
+        "git push origin HEAD:Master",
+        "git push origin :master",
+        "git push origin --delete master",
+        "git push origin feat/x:main",
+        "git push origin $(destination)",
+        "git push origin 'feat/with space'",
+        "GIT_WORK_TREE=/shared git push",
+        "nohup git push",
+        "nice git push",
+        "time git push",
+        "command git push",
+        "xargs -Z git push",
+        "cd /feature; git push",
+        "cd /feature && git status && git push",
+        "cd /feature && git push || git push",
+        "builtin cd /feature; git push",
+        ". setup; git push",
+        "git push --repo origin :",
+        "git push origin HEAD:heads/trunk",
+        "git push origin HEAD:refs/heads/TRUNK",
+        "git push origin HEAD:ma{ster,in}",
+        "git push $OPTIONS origin feat/x",
+        "(cd /feature); git push",
+        "cd /feature | git push",
+        "true || cd /feature; git push",
+        "pushd /feature; git push",
+        "popd; git push",
+        "eval cd /feature; git push",
+        "source setup; git push",
+        "GIT_DIR=/shared git push",
+        "FOO=bar git push",
+        "env git push",
+        "timeout 5 git push",
+        "xargs git push",
+        "git push origin HEAD:HEAD",
+        "git push origin HEAD:refs/heads/HEAD",
+        "git push origin HEAD:feat//x",
+        "git push origin +feat/x",
+        "git push `remote` feat/x",
+        "git push origin feat/*",
+        "git push origin feat/?",
+        "git push origin feat/[x]",
+        "git push origin ~user",
+        "git push origin feat/!x",
+        "git push origin HEAD^",
+        "git push origin 'feat/x",
+    ],
+)
+def test_unproven_pushes_deny(push_gate: ModuleType, command: str) -> None:
+    """Reviewer bypasses and unreadable shell/refspec forms must fail closed."""
+    reason = push_gate.push_denial(command, "/repo")
+    assert isinstance(reason, str) and reason
+
+
+def test_attached_directory_looks_up_actual_push_repository(
+    permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A feature cwd cannot authorize a push from a shared -C repository."""
+    lookup = Mock(return_value=("master", None))
+    monkeypatch.setattr(permission_gate, "_branch_state", lookup)
+    assert permission_gate.push_denial("git -C/shared push", "/feature")
+    lookup.assert_called_once_with("/shared")
+
+
+@pytest.mark.parametrize(
+    "command", ["git push", "git push origin feat/x", "git push origin HEAD:trunk"]
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("git unavailable"),
+        subprocess.TimeoutExpired("git", 5),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid ref"),
+        RuntimeError("unexpected lookup failure"),
+    ],
+)
+def test_lookup_exceptions_deny_every_push(
+    permission_gate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    failure: Exception,
+) -> None:
+    """A failing collaborator must emit a refusal rather than crash the hook."""
+    monkeypatch.setattr(permission_gate.subprocess, "run", Mock(side_effect=failure))
+    assert permission_gate.push_denial(command, "/repo")
+
+
+@pytest.mark.parametrize(
+    "command", ["git push", "git push origin feat/x", "git push origin HEAD:trunk"]
+)
+def test_nonrepository_lookup_denies_every_push(
+    permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    """A nonzero Git result proves no destination safe, even an explicit feature ref."""
+    run = Mock(return_value=subprocess.CompletedProcess(["git"], 128, b"", b"not a repository"))
+    monkeypatch.setattr(permission_gate.subprocess, "run", run)
+    assert permission_gate.push_denial(command, "/repo")
+    assert run.call_count == 1
+    assert run.call_args.kwargs["timeout"] == 5
+
+
+def test_invalid_utf8_branch_discovery_denies_push(
+    permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Undecodable repository state cannot prove an explicit destination safe."""
+    run = Mock(
+        return_value=subprocess.CompletedProcess(
+            ["git"],
+            0,
+            b"*\trefs/heads/feat/x\t\n \trefs/remotes/origin/HEAD\trefs/remotes/origin/\xff\n",
+            b"",
+        )
+    )
+    monkeypatch.setattr(permission_gate.subprocess, "run", run)
+    assert permission_gate.push_denial("git push origin HEAD:trunk", "/repo")
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        b"*\trefs/heads/feat/x\t\n \trefs/heads/\xff\t\n",
+        b"*\trefs/heads/feat/x\t\nmalformed\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/heads/other\t\textra\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/tags/v1.0.0\t\n",
+        b"*\trefs/heads/feat/x\t\n*\trefs/heads/master\t\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/remotes/origin/HEAD\t\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/remotes/origin/HEAD\trefs/heads/trunk\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/remotes/origin/HEAD\trefs/remotes/origin/\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/remotes/origin/HEAD\trefs/remotes/origin/tr unk\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/heads/\t\n",
+        b"*\trefs/heads/feat/x\t\n \trefs/heads/ma ster\t\n",
+    ],
+    ids=[
+        "undecodable",
+        "too-few-fields",
+        "too-many-fields",
+        "unexpected-ref",
+        "multiple-current-branches",
+        "missing-origin-target",
+        "non-origin-target",
+        "empty-origin-branch",
+        "whitespace-origin-branch",
+        "empty-local-branch",
+        "whitespace-local-branch",
+    ],
+)
+@pytest.mark.parametrize("command", ["git push", "git push origin feat/x"])
+def test_malformed_branch_discovery_denies_every_push(
+    permission_gate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    output: bytes,
+    command: str,
+) -> None:
+    """Invalid discovery cannot authorize either an implicit or explicit destination."""
+    run = Mock(return_value=subprocess.CompletedProcess(["git"], 0, output, b""))
+    monkeypatch.setattr(permission_gate.subprocess, "run", run)
+    reason = permission_gate.push_denial(command, "/repo")
+    assert isinstance(reason, str) and reason
+    run.assert_called_once()
+
+
+@pytest.mark.parametrize("command", ["git stash push", "git commit -m push", "git status"])
+def test_nonpush_commands_do_not_discover_branches(
+    permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    """Other subcommands mentioning push stay outside this guard."""
+    lookup = Mock(side_effect=AssertionError("unexpected lookup"))
+    monkeypatch.setattr(permission_gate, "_branch_state", lookup)
+    assert permission_gate.push_denial(command, "/repo") is None
+    lookup.assert_not_called()
+
+
+@pytest.mark.parametrize("branch", ["master", "MAIN", "development", "qa", "TRUNK", None])
+@pytest.mark.parametrize("refspec", ["", " origin HEAD", " origin @"])
+def test_implicit_shared_or_detached_destinations_deny(
+    permission_gate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    branch: str | None,
+    refspec: str,
+) -> None:
+    """All implicit spellings reject fixed and discovered shared branches or detached HEAD."""
+    monkeypatch.setattr(permission_gate, "_branch_state", Mock(return_value=(branch, "trunk")))
+    assert permission_gate.push_denial(f"git push{refspec}", "/repo")
+
+
+@pytest.mark.parametrize(
+    "origin", [b"", b" \trefs/remotes/origin/HEAD\trefs/remotes/origin/trunk\n"]
+)
+def test_valid_branch_discovery_allows_feature_push_without_requiring_origin_head(
+    permission_gate: ModuleType, monkeypatch: pytest.MonkeyPatch, origin: bytes
+) -> None:
+    """One bounded lookup proves a feature branch safe with or without origin HEAD."""
+    output = b"*\trefs/heads/feat/x\t\n" + origin
+    run = Mock(return_value=subprocess.CompletedProcess(["git"], 0, output, b""))
+    monkeypatch.setattr(permission_gate.subprocess, "run", run)
+    assert permission_gate.push_denial("git push", "/repo") is None
+    run.assert_called_once_with(
+        [
+            "git",
+            "for-each-ref",
+            "--format=%(HEAD)%09%(refname)%09%(symref)",
+            "refs/heads",
+            "refs/remotes/origin/HEAD",
+        ],
+        cwd="/repo",
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )

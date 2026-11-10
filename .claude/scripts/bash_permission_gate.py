@@ -6,6 +6,10 @@ Reads the PreToolUse hook JSON on stdin and classifies the Bash command against 
 ledger (``.claude/permissions-ledger.json`` — the single source of truth: seeded allows, guarded
 patterns, recorded user grants and denials, each with a note). Decision:
 
+  * push guard hit           -> ``permissionDecision: deny`` — the one hard block here, checked
+    first and holding in every permission mode. A ``git push`` that would reach a shared branch
+    (named, or implied by the current branch), pushes every branch, or forces is refused
+    (:func:`push_denial`); settings.json allows every other push without a prompt.
   * ask-pattern / denial hit -> ``permissionDecision: ask`` with the ledger note as the reason, so
     destructive / outward-facing / previously-denied operations always get a human look. The
     patterns run against the raw command AND against every decomposed part in the normalized
@@ -27,7 +31,8 @@ patterns, recorded user grants and denials, each with a note). Decision:
     ``permission_recorder.py`` (PostToolUse) appends a grant to the ledger so the same
     command never prompts twice.
 
-It never *blocks*: the worst case for an unrecognised command is the normal one-time prompt. Only
+Beyond the push guard it never *blocks*: the worst case for an unrecognised command is the
+normal one-time prompt. Only
 Bash is gated here — other tools are governed by settings.json. Splitting is quote-aware: ``;`` /
 ``&&`` / ``|`` inside quotes (``python3 -c "a; b"``, commit messages) never split, and heredoc
 bodies are stripped before classification — they are data for the command, never commands
@@ -44,9 +49,15 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+# One definition of "shared branch", shared with /checkpoint so the two can never disagree.
+# Same import precedent as permission_recorder.py.
+sys.path.insert(0, str(Path(__file__).parent))
+from git_checkpoint import PROTECTED_BRANCHES  # noqa: E402
 
 
 def _config_dir() -> Path:
@@ -144,6 +155,42 @@ _OPAQUE_SUBSTITUTION: str = "__opaque_substitution__"
 # or hide the real closing delimiter. A body containing any of them is opaque.
 _OPAQUE_BODY_CHARS: frozenset[str] = frozenset("'\"\\#`")
 _HEREDOC: re.Pattern[str] = re.compile(r"<<-?\s*(?P<q>['\"]?)(?P<tag>\w+)(?P=q)")
+# Push guard (:func:`push_denial`): a push runs only when every check below proves it safe, so
+# each list is closed — whatever is not named here is refused, never guessed at.
+# Push options that take a value, as the next token or as ``--opt=value``.
+_PUSH_VALUE_OPTS: frozenset[str] = frozenset(
+    {"-o", "--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules"}
+)
+# Every other push option let through. An abbreviation git would expand (``--al``) or an option
+# from a newer git might take a value or widen the push, so it is not here.
+_PUSH_FLAGS: frozenset[str] = frozenset(
+    {"--set-upstream", "--tags", "--follow-tags", "--no-follow-tags", "--delete", "--dry-run"}
+    | {"--porcelain", "--atomic", "--no-atomic", "--quiet", "--verbose", "--progress"}
+    | {"--no-progress", "--thin", "--no-thin", "--verify", "--no-verify", "--signed"}
+    | {"--no-signed", "--ipv4", "--ipv6", "--no-recurse-submodules"}
+)
+_PUSH_SHORT_FLAGS: frozenset[str] = frozenset("uqvnd46")  # letters a short cluster may hold
+_PUSH_EVERY_BRANCH: frozenset[str] = frozenset({"--all", "--branches", "--mirror"})
+_HEAD_NAMES: frozenset[str] = frozenset({"HEAD", "@"})  # refspec names for the current branch
+# The only characters a push token may hold: none of them lets Bash expand, glob or split it,
+# so the token the guard reads is the token git receives.
+_LITERAL: re.Pattern[str] = re.compile(r"[\w./:@=+,%-]+", re.ASCII)
+# An output redirection (``2>&1``, ``>/dev/null``, ``>`` then a file) — not a push argument.
+# Group 1 is the target when it is attached; empty means the next token is the target.
+_REDIRECTION: re.Pattern[str] = re.compile(r"(?:\d*|&)>>?(.*)", re.DOTALL)
+# Heads that can change the directory later parts run in (``builtin``/``eval``/``source`` may).
+_CWD_CHANGERS: frozenset[str] = frozenset({"cd", "pushd", "popd", "builtin", "eval", "source", "."})
+# The one directory change that is followed: the command opens with ``cd <literal> &&``.
+_CD_THEN: re.Pattern[str] = re.compile(
+    r"cd\s+(?P<dir>[\w./@+,%-]+)\s*&&(?P<rest>.*)", re.ASCII | re.DOTALL
+)
+_REF_PREFIXES: tuple[str, ...] = ("refs/", "heads/")  # stripped in order: git resolves each form
+_GIT_TIMEOUT_SECONDS: int = 5
+_ORIGIN_HEAD_REF: str = "refs/remotes/origin/HEAD"
+_ORIGIN_PREFIX: str = "refs/remotes/origin/"
+_HEADS_PREFIX: str = "refs/heads/"
+_REF_FIELDS: int = 3  # %(HEAD), %(refname), %(symref) — the lookup's tab-separated format
+_PUSH_RULE: str = "shared-branch and force pushes are human-only (git-workflow)"
 
 
 def load_ledger() -> dict[str, Any]:
@@ -594,6 +641,239 @@ def unallowed_parts(command: str, ledger: dict[str, Any]) -> list[str]:
     return [part for part in command_parts(command) if not _segment_allowed(part, keys, patterns)]
 
 
+def _read_push(tokens: list[str]) -> tuple[list[str], list[str]] | str | None:
+    """Read a normalized part as a ``git push``.
+
+    Args:
+        tokens: The part's tokens as :func:`_unwrap_tokens` returns them.
+
+    Returns:
+        None when the part is not a ``git push``; ``(git -C directories in order, the tokens
+        after push)`` when it is; or a refusal reason when a git option other than ``-C`` and
+        ``--no-pager`` stands ahead of a ``push`` token — it may take a value or redirect the
+        push (``-c``, ``--git-dir``), so the part cannot be read.
+    """
+    if tokens[:1] != ["git"] or "push" not in tokens:
+        return None
+    directories: list[str] = []
+    rest = iter(tokens[1:])
+    for token in rest:
+        if token == "-C":
+            directories.append(next(rest, ""))
+        elif token.startswith("-C"):
+            directories.append(token[2:])
+        elif not token.startswith("-"):
+            return (directories, list(rest)) if token == "push" else None
+        elif token != "--no-pager":
+            return f"git option {token} ahead of push is not one the push guard can read"
+    return None
+
+
+def _branch_state(cwd: str) -> tuple[str | None, str | None] | None:
+    """The checked-out branch and the branch origin's HEAD names, or None when git cannot say.
+
+    One git call answers both — ``%(HEAD)`` stars the current branch, ``%(symref)`` resolves
+    origin's HEAD — because this runs inside a hook on a ``git push``. Origin's HEAD is the
+    only mainline candidate ``new_task.mainline`` knows that :data:`PROTECTED_BRANCHES` does
+    not already name.
+
+    Args:
+        cwd: The directory the push runs in.
+
+    Returns:
+        ``(branch, origin_head)`` — the branch None on a detached HEAD, origin's HEAD None when
+        the repository records none; or None when the lookup failed (no repository, no git, a
+        timeout) or its output is anything but the expected lines (undecodable bytes, a
+        malformed line, an unexpected ref, an origin HEAD naming no origin branch, an empty or
+        whitespace-holding branch name, two current branches) — which the caller must treat
+        as "nothing is proven".
+    """
+    try:
+        result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(HEAD)%09%(refname)%09%(symref)"]
+            + ["refs/heads", _ORIGIN_HEAD_REF],
+            cwd=cwd,
+            capture_output=True,
+            check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        lines = result.stdout.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None  # a name read approximately could fail to match a shared branch
+    branch: str | None = None
+    origin_head: str | None = None
+    for line in lines:
+        fields = line.split("\t")
+        if len(fields) != _REF_FIELDS:
+            return None
+        marker, ref, symref = fields
+        # Origin's HEAD must name an origin branch, every other line a local one.
+        full, prefix = (symref, _ORIGIN_PREFIX) if ref == _ORIGIN_HEAD_REF else (ref, _HEADS_PREFIX)
+        name = full.removeprefix(prefix)
+        if not full.startswith(prefix) or not name or any(char.isspace() for char in name):
+            return None  # an empty or blank name would match no shared branch
+        if ref == _ORIGIN_HEAD_REF:
+            origin_head = name
+        elif marker == "*":
+            if branch is not None:
+                return None
+            branch = name
+    return branch, origin_head
+
+
+def _without_redirections(tokens: list[str]) -> list[str]:
+    """The tokens minus output redirections (:data:`_REDIRECTION`) and their targets."""
+    kept: list[str] = []
+    rest = iter(tokens)
+    for token in rest:
+        redirection = _REDIRECTION.fullmatch(token)
+        if redirection is None:
+            kept.append(token)
+        elif not redirection[1]:
+            next(rest, None)  # the target is the next token
+    return kept
+
+
+def _push_refusal(raw: list[str], directories: list[str], args: list[str], cwd: str) -> str | None:
+    """Why one ``git push`` must not run, or None when every check proves it safe.
+
+    In order: nothing but shell scaffolding may precede ``git`` (an env assignment or a wrapper
+    can redirect the push); every token must be literal (:data:`_LITERAL`); every option must
+    be on a closed list, none of them forcing or pushing every branch; the repository's branch
+    state must be readable; and every refspec must be ``[+]`` -free ``[<src>:]<dst>`` whose
+    destination, with :data:`_REF_PREFIXES` stripped, is not a shared branch —
+    :data:`PROTECTED_BRANCHES` or origin's HEAD, compared case-insensitively. No refspec, or a
+    bare ``HEAD``/``@``, means the current branch, which must then be known.
+
+    Args:
+        raw: The part's tokens before env prefixes and wrappers were stripped.
+        directories: The ``git -C`` directories, in order.
+        args: The tokens after ``push``.
+        cwd: The directory the part runs in.
+    """
+    head = next(i for i, token in enumerate(raw) if token.rsplit("/", 1)[-1] == "git")
+    if not all(token in _STRUCTURAL for token in raw[:head]):
+        return "an env assignment or wrapper ahead of git may redirect the push"
+    args = _without_redirections(args)
+    for token in [*directories, *args]:
+        if _SUB_TOKEN in token or not _LITERAL.fullmatch(token):
+            return f"{token!r} is not a literal the push guard can read (expansion, glob, quoting)"
+    positionals: list[str] = []
+    remote_by_option = False
+    rest = iter(args)
+    for arg in rest:
+        name, equals, _ = arg.partition("=")
+        short = arg.startswith("-") and not arg.startswith("--")
+        if arg == "--":
+            positionals.extend(rest)
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        elif name in _PUSH_EVERY_BRANCH:
+            return f"{arg} pushes every branch, shared ones included"
+        elif name in _PUSH_VALUE_OPTS:
+            if not equals:
+                next(rest, None)  # the value is the next token
+            remote_by_option = remote_by_option or name == "--repo"
+        elif short and arg.startswith("-o"):
+            continue  # ``-o<value>``: the push option's value is attached
+        elif name in _PUSH_FLAGS or (short and set(arg[1:]) <= _PUSH_SHORT_FLAGS):
+            continue
+        elif arg.startswith("--force") or (short and "f" in arg):
+            return f"{arg} is a force push"
+        else:
+            return f"{arg} is not an option the push guard can read"
+    state = _branch_state(os.path.join(cwd, *directories))
+    if state is None:
+        return "the repository's branches could not be read, so nothing proves the push safe"
+    branch, origin_head = state
+    shared = PROTECTED_BRANCHES | ({origin_head.lower()} if origin_head else set())
+    # The first positional is the remote. With --repo git still reads it that way, but a reader
+    # takes ``--repo origin master`` for a push to master, so every positional is then judged
+    # as a refspec — the stricter reading.
+    refspecs = positionals if remote_by_option else positionals[1:]
+    for refspec in refspecs or ["HEAD"]:  # no refspec: git pushes the current branch
+        if refspec.startswith("+"):
+            return f"{refspec} is a force push by refspec"
+        *sources, destination = refspec.split(":")
+        if destination in _HEAD_NAMES and not sources:
+            if branch is None:
+                return "HEAD is detached, so the branch it pushes to is unknown"
+            destination = branch
+        elif len(sources) > 1 or not destination or "//" in destination:
+            return f"{refspec} is not a refspec form the push guard recognises"
+        for prefix in _REF_PREFIXES:
+            destination = destination.removeprefix(prefix)
+        if destination in _HEAD_NAMES:
+            return f"{refspec} names HEAD as its destination, which is no branch"
+        if destination.lower() in shared:
+            return f"it would push to the shared branch '{destination}'"
+    return None
+
+
+def _push_denial(command: str, cwd: str) -> str | None:
+    """:func:`push_denial` without its crash guard."""
+    pushes: list[tuple[list[str], tuple[list[str], list[str]] | str]] = []
+    cwd_changes = 0
+    for part in command_parts(command):
+        raw = _segment_tokens(part)
+        tokens = _unwrap_tokens(raw)
+        if tokens is None:
+            if "push" in part:
+                return "a wrapper the gate cannot read may hide a push"
+            continue
+        read = _read_push(tokens)
+        if tokens[:1] and tokens[0] in _CWD_CHANGERS:
+            cwd_changes += 1
+        elif read is not None:
+            pushes.append((raw, read))
+    if not pushes:
+        return None
+    if cwd_changes:
+        opening = _CD_THEN.fullmatch(_strip_heredocs(command).replace("\\\n", " ").strip())
+        first = command_parts(opening["rest"])[:1] if opening else []
+        followed = cwd_changes == 1 and len(pushes) == 1 and first
+        if not opening or not followed or _segment_tokens(first[0]) != pushes[0][0]:
+            return (
+                "the directory it runs in cannot be followed — use `git -C <dir> push …`, "
+                "or exactly `cd <dir> && git push …`"
+            )
+        cwd = os.path.join(cwd, opening["dir"])
+    for raw, read in pushes:
+        reason = read if isinstance(read, str) else _push_refusal(raw, read[0], read[1], cwd)
+        if reason is not None:
+            return reason
+    return None
+
+
+def push_denial(command: str, cwd: str) -> str | None:
+    """Why the command's ``git push`` must be denied outright, or None.
+
+    A push is let through only when the guard proves it safe (:func:`_push_refusal`); whatever
+    it cannot read is refused. The directory is the hook's, moved only by ``git -C <dir>`` or
+    by the command opening with ``cd <dir> &&`` immediately followed by its single push — any
+    other directory change beside a push (a subshell, ``;``, ``||``, a pipe, ``pushd``) is
+    refused, because the part it applies to cannot be told from the text. Not seen at all: a
+    push inside ``bash -c``, a script or an alias.
+
+    Args:
+        command: The raw Bash command.
+        cwd: The directory the command starts in.
+
+    Returns:
+        The reason for the first refused push, else None. An unexpected error while judging a
+        command that mentions ``push`` is itself a refusal — the hook must never crash open.
+    """
+    try:
+        return _push_denial(command, cwd)
+    except Exception as error:  # fail closed: a crash here would let the push through
+        return f"the push guard failed ({type(error).__name__})" if "push" in command else None
+
+
 def _decision(kind: str, reason: str) -> str:
     return json.dumps(
         {
@@ -620,6 +900,10 @@ def main() -> None:
     if not command.strip():
         return
 
+    denial = push_denial(command, str(data.get("cwd") or Path.cwd()))
+    if denial is not None:
+        print(_decision("deny", f"blocked by the push guard: {denial} — {_PUSH_RULE}"))
+        return
     ledger = load_ledger()
     note = ask_match(command, ledger)
     if note is not None:

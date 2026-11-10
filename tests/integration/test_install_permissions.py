@@ -38,17 +38,18 @@ def test_source_settings_allow_required_rule(
     assert rule in source_permissions["allow"]
 
 
-def test_source_settings_allow_only_the_narrow_requested_forms(
+def test_source_settings_allow_requested_forms_including_all_pushes(
     source_permissions: dict[str, list[str]],
 ) -> None:
-    """Reject broad wildcards, extra commands, and alternate permission forms."""
-    assert set(source_permissions["allow"]) == set(ORIGINAL_ALLOW_RULES + ROUTINE_ALLOW_RULES)
+    """Task 028 allows bare and argument-bearing pushes alongside routine commands."""
+    assert set(source_permissions["allow"]) == set(
+        ORIGINAL_ALLOW_RULES + ROUTINE_ALLOW_RULES + ("Bash(git push *)", "Bash(git push)")
+    )
 
 
 @pytest.mark.parametrize(
     "command",
     [
-        "git push",
         "git merge",
         "git reset",
         "git clean",

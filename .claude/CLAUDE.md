@@ -17,7 +17,7 @@ the human clears it), both kept out of git through the repo's local `.git/info/e
 also carries `tasks/` everywhere, and `docs/adr/` unless the repo is private;
 `~/.claude/` is read-free but edited only with permission; reads free except sensitive
 paths (ask first). Network reads free; network writes deny-by-default (standing exceptions:
-feature-branch pushes, `gh` ops on own PRs, calls the project's own code makes). The
+pushes to non-shared branches, `gh` ops on own PRs, calls the project's own code makes). The
 permission ledger ([permissions-ledger.json](permissions-ledger.json) — the project's
 copy if it has one, else the global) decides what Bash auto-runs vs. prompts — never work
 around a prompt.
@@ -143,7 +143,7 @@ the project's own `.claude/scripts/<name>.py` runs instead only in the source re
   [debate.py](scripts/debate.py) runs a contested question's debate — KASPER calls both
   directly; neither is a hook.
 - Settings also carry the built-in deny backstop: `sudo`, `rm -rf`, force-push,
-  shared-branch pushes, and the credential paths — the ledger can widen what auto-runs,
+  shared-branch pushes (the gate hook also hard-denies any push it cannot prove safe), and the credential paths — the ledger can widen what auto-runs,
   never those.
   They also carry a narrow allow list for routine git/gh operations: in auto mode only settings
   rules resolve before the classifier, a hook's allow is not documented to, and deny rules still win.

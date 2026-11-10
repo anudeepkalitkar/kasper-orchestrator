@@ -20,9 +20,11 @@ direct push). Deploys and releases are explicit human actions (a tag or a run co
    it out only in a private repo ([[boundaries]], [[documentation]]); untracked ADRs there go in a
    `chore` commit of their own. Then update the task doc.
 3. **PR per task** to the mainline; link it in the task doc.
-4. **Autonomy envelope**: pushing `feature/*`/`fix/*` and opening the task's PR need no per-event
-   confirmation; chartered loops may commit and push on feature branches. **Merges and
-   shared-branch pushes stay human-only, always.** Never force-push shared branches; never use
+4. **Autonomy envelope**: pushing a non-shared branch or a tag, and opening the task's PR need no per-event
+   confirmation; chartered loops may commit and push on feature branches. **Merges stay
+   human-only, always**; shared-branch and force pushes, and any push the gate hook cannot prove safe, are denied
+   (detail in [[boundaries]]).
+   Never force-push shared branches; never use
    interactive git flags (`-i`).
 5. **Local verification is the gate** — the recipe is in [[autonomous-workflow]] §4. It runs
    **once per task, in the Codex tester seat**; a PR asserts it ran green on that head, and

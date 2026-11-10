@@ -114,6 +114,7 @@
     "git count-objects": "read-only",
     "git bundle": "local",
     "git reset": "local unstage (--hard stays guarded)",
+    "git push": "any branch (shared-branch and force pushes stay guarded: ask_patterns here, hard deny in the gate's push guard)",
     "gh pr": "PR ops incl. create on own repos (merge is guarded)",
     "gh issue": "own repos",
     "gh run": "CI reads/reruns",
@@ -133,12 +134,7 @@
     "docker info": "read-only",
     "docker build": "local"
   },
-  "allow_patterns": [
-    {
-      "pattern": "\\bgit\\s+push\\b.*\\b(feat|fix|feature|docs|chore|refactor|test)/",
-      "note": "feature-branch push (feat/fix/feature/docs/chore/refactor/test) — standing exception per git-workflow/boundaries"
-    }
-  ],
+  "allow_patterns": [],
   "ask_patterns": [
     {
       "pattern": "\\brm\\s+-[a-zA-Z]*[rf]",
